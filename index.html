@@ -409,7 +409,7 @@
 
         function displaySingleResult(data) {
             const resultDiv = document.getElementById('singleResult');
-            const isGood = data.prediction === 'GOOD';
+            const isGood = data.prediction.includes('GOOD');
 
             const html = `
                 <div class="result ${isGood ? 'good' : 'wait'}">
