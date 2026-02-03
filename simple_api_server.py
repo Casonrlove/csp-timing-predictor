@@ -12,6 +12,7 @@ import os
 from datetime import datetime
 from data_collector import CSPDataCollector
 from options_analyzer import get_best_csp_option
+from options_analyzer_multi import get_all_csp_options
 
 app = FastAPI(
     title="CSP Timing API",
@@ -31,6 +32,8 @@ app.add_middleware(
 
 class PredictionRequest(BaseModel):
     ticker: str
+    min_delta: Optional[float] = 0.25
+    max_delta: Optional[float] = 0.35
 
 
 class PredictionResponse(BaseModel):
@@ -44,6 +47,7 @@ class PredictionResponse(BaseModel):
     model_type: str
     technical_context: dict
     options_data: Optional[dict] = None
+    all_options: Optional[list] = None
 
 
 class MultiTickerRequest(BaseModel):
@@ -126,8 +130,11 @@ def predict(request: PredictionRequest):
         current_data = collector.data.iloc[-1]
         current_price = float(current_data['Close'])
 
-        # Get options data (will be None if market closed)
-        options_data = get_best_csp_option(ticker)
+        # Get ALL options data in the delta range
+        all_options = get_all_csp_options(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
+
+        # Get the best one for backward compatibility
+        options_data = all_options[0] if all_options else None
 
         # Add edge calculation if options data available
         if options_data:
@@ -184,7 +191,8 @@ def predict(request: PredictionRequest):
             date=datetime.now().strftime('%Y-%m-%d'),
             model_type="Random Forest (Multi-Ticker)" if "multi" in MODEL_PATH else "Random Forest",
             technical_context=technical_context,
-            options_data=options_data
+            options_data=options_data,
+            all_options=all_options[:5] if all_options else None  # Top 5 options
         )
 
     except Exception as e:

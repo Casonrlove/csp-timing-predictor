@@ -52,9 +52,10 @@ def get_best_csp_option(ticker, target_delta_min=0.25, target_delta_max=0.35,
                 opt_chain = stock.option_chain(exp_date)
                 puts = opt_chain.puts
 
-                # Filter for ITM/ATM/slightly OTM puts (likely to have delta data)
-                # Delta for puts is negative, so we look for -0.35 to -0.25
-                puts = puts[puts['strike'] <= current_price * 1.05]  # Within 5% of current price
+                # Filter for OTM puts only (strike BELOW stock price)
+                # For CSP selling, we want OTM puts only
+                puts = puts[puts['strike'] < current_price]  # Only OTM
+                puts = puts[puts['strike'] >= current_price * 0.85]  # Not too far OTM (>15%)
 
                 for _, put in puts.iterrows():
                     strike = put['strike']
