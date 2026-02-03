@@ -307,7 +307,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.0.2</div>
+            <div class="version">v1.0.3</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -352,7 +352,44 @@
         <div class="card">
             <h2>Compare Multiple Tickers</h2>
             <div class="input-group">
-                <label for="multiTickers">Stock Tickers (comma separated)</label>
+                <label>Quick Select Tickers</label>
+                <div class="ticker-checkboxes">
+                    <div class="ticker-checkbox-item">
+                        <input type="checkbox" id="cb_NVDA" value="NVDA">
+                        <label for="cb_NVDA">NVDA</label>
+                    </div>
+                    <div class="ticker-checkbox-item">
+                        <input type="checkbox" id="cb_TSLA" value="TSLA">
+                        <label for="cb_TSLA">TSLA</label>
+                    </div>
+                    <div class="ticker-checkbox-item">
+                        <input type="checkbox" id="cb_AMD" value="AMD">
+                        <label for="cb_AMD">AMD</label>
+                    </div>
+                    <div class="ticker-checkbox-item">
+                        <input type="checkbox" id="cb_AAPL" value="AAPL">
+                        <label for="cb_AAPL">AAPL</label>
+                    </div>
+                    <div class="ticker-checkbox-item">
+                        <input type="checkbox" id="cb_MSFT" value="MSFT">
+                        <label for="cb_MSFT">MSFT</label>
+                    </div>
+                    <div class="ticker-checkbox-item">
+                        <input type="checkbox" id="cb_GOOGL" value="GOOGL">
+                        <label for="cb_GOOGL">GOOGL</label>
+                    </div>
+                    <div class="ticker-checkbox-item">
+                        <input type="checkbox" id="cb_META" value="META">
+                        <label for="cb_META">META</label>
+                    </div>
+                    <div class="ticker-checkbox-item">
+                        <input type="checkbox" id="cb_AMZN" value="AMZN">
+                        <label for="cb_AMZN">AMZN</label>
+                    </div>
+                </div>
+            </div>
+            <div class="input-group">
+                <label for="multiTickers">Or Enter Custom Tickers (comma separated)</label>
                 <input type="text" id="multiTickers" placeholder="NVDA, TSLA, AMD, AAPL" style="text-transform: uppercase;">
             </div>
             <button onclick="predictMulti()">📊 Compare All</button>
@@ -512,16 +549,26 @@
         }
 
         async function predictMulti() {
-            const tickersInput = document.getElementById('multiTickers').value.trim();
             const modelType = document.getElementById('modelType').value;
             const resultDiv = document.getElementById('multiResults');
 
-            if (!tickersInput) {
-                alert('Please enter ticker symbols');
+            // Get tickers from checkboxes
+            const checkedBoxes = document.querySelectorAll('.ticker-checkboxes input[type="checkbox"]:checked');
+            const selectedTickers = Array.from(checkedBoxes).map(cb => cb.value);
+
+            // Get tickers from text input
+            const tickersInput = document.getElementById('multiTickers').value.trim();
+            const manualTickers = tickersInput ? tickersInput.split(',').map(t => t.trim().toUpperCase()).filter(t => t) : [];
+
+            // Combine both (remove duplicates)
+            const allTickers = [...new Set([...selectedTickers, ...manualTickers])];
+
+            if (allTickers.length === 0) {
+                alert('Please select or enter ticker symbols');
                 return;
             }
 
-            const tickers = tickersInput.split(',').map(t => t.trim().toUpperCase()).filter(t => t);
+            const tickers = allTickers;
 
             resultDiv.innerHTML = '<div class="loading"><div class="spinner"></div>Comparing tickers...</div>';
 
@@ -565,7 +612,7 @@
                             `;
                         }
 
-                        const isGood = data.prediction === 'GOOD';
+                        const isGood = data.prediction.includes('GOOD');
                         return `
                             <div class="result ${isGood ? 'good' : 'wait'}">
                                 <div class="result-header">
