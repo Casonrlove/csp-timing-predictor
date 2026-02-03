@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSP Timing Predictor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .config-section {
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        input[type="text"], select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 8px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result.good {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .result.wait {
+            background: linear-gradient(135deg, #fc4a1a 0%, #f7b733 100%);
+            color: white;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .ticker-name {
+            font-size: 1.8rem;
+            font-weight: bold;
+        }
+
+        .prediction {
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+
+        .confidence-bar {
+            background: rgba(255, 255, 255, 0.3);
+            height: 30px;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+
+        .confidence-fill {
+            background: white;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: width 0.5s ease-out;
+        }
+
+        .price-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .info-box {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .info-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            font-size: 1.3rem;
+            font-weight: bold;
+        }
+
+        .technical-details {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .technical-section {
+            margin-bottom: 15px;
+        }
+
+        .technical-section h4 {
+            margin-bottom: 8px;
+            opacity: 0.9;
+        }
+
+        .technical-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .technical-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 12px;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .multi-results {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .error {
+            background: #ff4444;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .quick-tickers {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .quick-ticker {
+            background: #f0f0f0;
+            border: 2px solid #e0e0e0;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-ticker:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💰 CSP Timing Predictor</h1>
+            <p>AI-powered predictions for optimal Cash Secured Put timing</p>
+        </div>
+
+        <div class="card config-section">
+            <div class="input-group">
+                <label for="apiUrl">API URL (your ngrok URL)</label>
+                <input type="text" id="apiUrl" placeholder="https://your-ngrok-url.ngrok.io">
+                <small style="color: #666; display: block; margin-top: 5px;">
+                    Get this from ngrok after starting your local server
+                </small>
+            </div>
+            <div class="input-group">
+                <label for="modelType">Model Type</label>
+                <select id="modelType">
+                    <option value="hybrid">Hybrid (Recommended)</option>
+                    <option value="lstm">LSTM</option>
+                    <option value="transformer">Transformer</option>
+                    <option value="tabnet">TabNet</option>
+                    <option value="tabnet_multi">TabNet Multi-Ticker</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Single Ticker Prediction</h2>
+            <div class="input-group">
+                <label for="ticker">Stock Ticker</label>
+                <input type="text" id="ticker" placeholder="NVDA" style="text-transform: uppercase;">
+                <div class="quick-tickers">
+                    <div class="quick-ticker" onclick="setTicker('NVDA')">NVDA</div>
+                    <div class="quick-ticker" onclick="setTicker('TSLA')">TSLA</div>
+                    <div class="quick-ticker" onclick="setTicker('AMD')">AMD</div>
+                    <div class="quick-ticker" onclick="setTicker('AAPL')">AAPL</div>
+                    <div class="quick-ticker" onclick="setTicker('MSFT')">MSFT</div>
+                </div>
+            </div>
+            <button onclick="predictSingle()">🔮 Get Prediction</button>
+            <div id="singleResult"></div>
+        </div>
+
+        <div class="card">
+            <h2>Compare Multiple Tickers</h2>
+            <div class="input-group">
+                <label for="multiTickers">Stock Tickers (comma separated)</label>
+                <input type="text" id="multiTickers" placeholder="NVDA, TSLA, AMD, AAPL" style="text-transform: uppercase;">
+            </div>
+            <button onclick="predictMulti()">📊 Compare All</button>
+            <div id="multiResults"></div>
+        </div>
+    </div>
+
+    <script>
+        // Save API URL to localStorage
+        const apiUrlInput = document.getElementById('apiUrl');
+        apiUrlInput.value = localStorage.getItem('apiUrl') || '';
+        apiUrlInput.addEventListener('change', () => {
+            localStorage.setItem('apiUrl', apiUrlInput.value);
+        });
+
+        function setTicker(ticker) {
+            document.getElementById('ticker').value = ticker;
+        }
+
+        function getApiUrl() {
+            const url = document.getElementById('apiUrl').value.trim();
+            if (!url) {
+                alert('Please enter your API URL first!');
+                throw new Error('No API URL');
+            }
+            return url;
+        }
+
+        async function predictSingle() {
+            const ticker = document.getElementById('ticker').value.trim().toUpperCase();
+            const modelType = document.getElementById('modelType').value;
+            const resultDiv = document.getElementById('singleResult');
+
+            if (!ticker) {
+                alert('Please enter a ticker symbol');
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="loading"><div class="spinner"></div>Loading prediction...</div>';
+
+            try {
+                const apiUrl = getApiUrl();
+                const response = await fetch(`${apiUrl}/predict`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        ticker: ticker,
+                        model_type: modelType
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displaySingleResult(data);
+
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        function displaySingleResult(data) {
+            const resultDiv = document.getElementById('singleResult');
+            const isGood = data.prediction === 'GOOD';
+
+            const html = `
+                <div class="result ${isGood ? 'good' : 'wait'}">
+                    <div class="result-header">
+                        <div class="ticker-name">${data.ticker}</div>
+                        <div class="prediction">${data.prediction}</div>
+                    </div>
+
+                    <div class="confidence-bar">
+                        <div class="confidence-fill" style="width: ${data.confidence * 100}%">
+                            ${(data.confidence * 100).toFixed(1)}% Confidence
+                        </div>
+                    </div>
+
+                    <div class="price-info">
+                        <div class="info-box">
+                            <div class="info-label">Current Price</div>
+                            <div class="info-value">$${data.current_price.toFixed(2)}</div>
+                        </div>
+                        <div class="info-box">
+                            <div class="info-label">Good Probability</div>
+                            <div class="info-value">${(data.prob_good * 100).toFixed(1)}%</div>
+                        </div>
+                        <div class="info-box">
+                            <div class="info-label">Date</div>
+                            <div class="info-value">${data.date}</div>
+                        </div>
+                        <div class="info-box">
+                            <div class="info-label">Model</div>
+                            <div class="info-value">${data.model_type}</div>
+                        </div>
+                    </div>
+
+                    <div class="technical-details">
+                        <div class="technical-section">
+                            <h4>Support / Resistance</h4>
+                            <div class="technical-grid">
+                                <div class="technical-item">
+                                    <span>From Support:</span>
+                                    <span>${data.technical_context.support_resistance.distance_from_support.toFixed(2)}%</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>From Resistance:</span>
+                                    <span>${data.technical_context.support_resistance.distance_from_resistance.toFixed(2)}%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="technical-section">
+                            <h4>Moving Averages</h4>
+                            <div class="technical-grid">
+                                <div class="technical-item">
+                                    <span>vs SMA20:</span>
+                                    <span>${data.technical_context.moving_averages.price_to_sma20.toFixed(2)}%</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>vs SMA50:</span>
+                                    <span>${data.technical_context.moving_averages.price_to_sma50.toFixed(2)}%</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>vs SMA200:</span>
+                                    <span>${data.technical_context.moving_averages.price_to_sma200.toFixed(2)}%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="technical-section">
+                            <h4>Indicators</h4>
+                            <div class="technical-grid">
+                                <div class="technical-item">
+                                    <span>RSI:</span>
+                                    <span>${data.technical_context.momentum.rsi.toFixed(2)}</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>ATR:</span>
+                                    <span>${data.technical_context.volatility.atr_pct.toFixed(2)}%</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>VIX:</span>
+                                    <span>${data.technical_context.volatility.vix.toFixed(2)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            resultDiv.innerHTML = html;
+        }
+
+        async function predictMulti() {
+            const tickersInput = document.getElementById('multiTickers').value.trim();
+            const modelType = document.getElementById('modelType').value;
+            const resultDiv = document.getElementById('multiResults');
+
+            if (!tickersInput) {
+                alert('Please enter ticker symbols');
+                return;
+            }
+
+            const tickers = tickersInput.split(',').map(t => t.trim().toUpperCase()).filter(t => t);
+
+            resultDiv.innerHTML = '<div class="loading"><div class="spinner"></div>Comparing tickers...</div>';
+
+            try {
+                const apiUrl = getApiUrl();
+                const response = await fetch(`${apiUrl}/predict/multi`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        tickers: tickers,
+                        model_type: modelType
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayMultiResults(data.results);
+
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        function displayMultiResults(results) {
+            const resultDiv = document.getElementById('multiResults');
+
+            const html = `
+                <div class="multi-results">
+                    ${results.map(data => {
+                        if (data.error) {
+                            return `
+                                <div class="result wait">
+                                    <div class="ticker-name">${data.ticker}</div>
+                                    <p>Error: ${data.error}</p>
+                                </div>
+                            `;
+                        }
+
+                        const isGood = data.prediction === 'GOOD';
+                        return `
+                            <div class="result ${isGood ? 'good' : 'wait'}">
+                                <div class="result-header">
+                                    <div class="ticker-name">${data.ticker}</div>
+                                    <div class="prediction">${data.prediction}</div>
+                                </div>
+                                <div class="confidence-bar">
+                                    <div class="confidence-fill" style="width: ${data.confidence * 100}%">
+                                        ${(data.confidence * 100).toFixed(1)}%
+                                    </div>
+                                </div>
+                                <div class="price-info">
+                                    <div class="info-box">
+                                        <div class="info-label">Price</div>
+                                        <div class="info-value">$${data.current_price.toFixed(2)}</div>
+                                    </div>
+                                    <div class="info-box">
+                                        <div class="info-label">Good Prob</div>
+                                        <div class="info-value">${(data.prob_good * 100).toFixed(1)}%</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+
+            resultDiv.innerHTML = html;
+        }
+
+        // Auto-uppercase ticker inputs
+        document.getElementById('ticker').addEventListener('input', (e) => {
+            e.target.value = e.target.value.toUpperCase();
+        });
+
+        document.getElementById('multiTickers').addEventListener('input', (e) => {
+            e.target.value = e.target.value.toUpperCase();
+        });
+    </script>
+</body>
+</html>
