@@ -342,7 +342,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.0.5</div>
+            <div class="version">v1.1.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -658,7 +658,31 @@
                                     <span>${(data.options_data.moneyness * 100).toFixed(2)}%</span>
                                 </div>
                             </div>
+
+                            <div style="margin-top: 15px; padding: 10px; background: rgba(0, 0, 0, 0.2); border-radius: 6px;">
+                                <h5 style="margin: 0 0 8px 0; font-size: 0.9rem;">📊 Advanced Greeks</h5>
+                                <div class="technical-grid" style="font-size: 0.85rem;">
+                                    <div class="technical-item">
+                                        <span>Gamma:</span>
+                                        <span>${data.options_data.gamma.toFixed(4)}</span>
+                                    </div>
+                                    <div class="technical-item">
+                                        <span>Vega:</span>
+                                        <span>$${data.options_data.vega.toFixed(4)}</span>
+                                    </div>
+                                    <div class="technical-item">
+                                        <span>IV:</span>
+                                        <span>${(data.options_data.implied_volatility * 100).toFixed(2)}%</span>
+                                    </div>
+                                    <div class="technical-item">
+                                        <span>Model:</span>
+                                        <span style="font-size: 0.75rem;">${data.options_data.model_used}</span>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div style="margin-top: 10px; font-size: 0.85rem; opacity: 0.8;">
+                                <em>✓ Greeks calculated using ${data.options_data.model_used} with real market IV</em><br>
                                 <em>Note: Options data only available during market hours (9:30 AM - 4:00 PM ET)</em>
                             </div>
                         </div>

@@ -1,11 +1,13 @@
 """
 Options data analyzer for CSP timing
 Calculates ROR and theta efficiency for optimal CSP strikes
+Uses advanced Black-Scholes with Binomial tree for maximum accuracy
 """
 
 import yfinance as yf
 from datetime import datetime, timedelta
 import pandas as pd
+from advanced_options_pricing import get_accurate_greeks
 
 
 def get_best_csp_option(ticker, target_delta_min=0.25, target_delta_max=0.35,
@@ -55,36 +57,28 @@ def get_best_csp_option(ticker, target_delta_min=0.25, target_delta_max=0.35,
                 puts = puts[puts['strike'] <= current_price * 1.05]  # Within 5% of current price
 
                 for _, put in puts.iterrows():
-                    # Calculate approximate delta if not available
-                    # For puts: delta ≈ (strike - current_price) / current_price (rough approximation)
-                    # More accurately, we use moneyness as proxy
                     strike = put['strike']
                     moneyness = strike / current_price
 
-                    # Estimate delta based on moneyness and DTE
-                    # Rough approximation: closer to ATM and shorter DTE = higher delta
-                    if moneyness > 1.0:  # ITM put
-                        estimated_delta = -0.6
-                    elif moneyness > 0.98:  # Near ATM
-                        estimated_delta = -0.45
-                    elif moneyness > 0.95:  # Slightly OTM
-                        estimated_delta = -0.35
-                    elif moneyness > 0.92:
-                        estimated_delta = -0.25
-                    else:  # Far OTM
-                        estimated_delta = -0.15
+                    # Only process reasonable strikes (not too far OTM)
+                    if moneyness < 0.85:  # More than 15% OTM
+                        continue
 
-                    # Adjust for DTE (longer DTE = lower delta magnitude)
-                    dte_factor = 30 / max(dte, 30)
-                    estimated_delta = estimated_delta * dte_factor
+                    # Calculate ACCURATE Greeks using advanced Black-Scholes
+                    greeks = get_accurate_greeks(ticker, strike, exp_date, 'put', use_binomial=True)
+
+                    if not greeks:
+                        continue
+
+                    delta = greeks['delta']
+                    delta_magnitude = abs(delta)
 
                     # Check if delta is in target range
-                    delta_magnitude = abs(estimated_delta)
                     if delta_magnitude < target_delta_min or delta_magnitude > target_delta_max:
                         continue
 
-                    # Calculate metrics
-                    premium = (put['bid'] + put['ask']) / 2  # Midpoint
+                    # Use market price from Greeks calculation
+                    premium = greeks['market_price']
 
                     if premium <= 0 or strike <= 0:
                         continue
@@ -95,8 +89,8 @@ def get_best_csp_option(ticker, target_delta_min=0.25, target_delta_max=0.35,
                     # Annualized ROR
                     annualized_ror = ror * (365 / dte)
 
-                    # Theta efficiency: Daily premium as % of capital
-                    theta_efficiency = (premium / strike) * 100 / dte
+                    # Theta efficiency: Daily premium as % of capital (use actual theta!)
+                    theta_efficiency = abs(greeks['theta'] / strike) * 100  # Theta is already per day
 
                     # Score: how close to target delta center (0.30) and target DTE center (37.5)
                     target_delta = 0.30
@@ -110,9 +104,13 @@ def get_best_csp_option(ticker, target_delta_min=0.25, target_delta_max=0.35,
                         best_option = {
                             'strike': float(strike),
                             'premium': float(premium),
-                            'bid': float(put['bid']),
-                            'ask': float(put['ask']),
-                            'delta': round(estimated_delta, 3),
+                            'bid': float(greeks['bid']),
+                            'ask': float(greeks['ask']),
+                            'delta': round(delta, 4),  # Accurate delta!
+                            'gamma': round(greeks['gamma'], 5),
+                            'theta': round(greeks['theta'], 4),
+                            'vega': round(greeks['vega'], 4),
+                            'implied_volatility': round(greeks['implied_volatility'], 4),
                             'volume': int(put['volume']) if pd.notna(put['volume']) else 0,
                             'open_interest': int(put['openInterest']) if pd.notna(put['openInterest']) else 0,
                             'dte': dte,
@@ -120,7 +118,8 @@ def get_best_csp_option(ticker, target_delta_min=0.25, target_delta_max=0.35,
                             'ror': round(ror, 2),
                             'annualized_ror': round(annualized_ror, 2),
                             'theta_efficiency': round(theta_efficiency, 4),
-                            'moneyness': round(moneyness, 4)
+                            'moneyness': round(moneyness, 4),
+                            'model_used': greeks['model_used']
                         }
 
             except Exception as e:
