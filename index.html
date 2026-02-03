@@ -342,7 +342,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.0.3</div>
+            <div class="version">v1.0.4</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -576,6 +576,61 @@
                                 </div>
                             </div>
                         </div>
+
+                        ${data.options_data ? `
+                        <div class="technical-section" style="background: rgba(255, 255, 255, 0.15); padding: 15px; border-radius: 8px; margin-top: 15px;">
+                            <h4 style="color: #ffd700; margin-bottom: 12px;">📈 Suggested CSP Trade</h4>
+                            <div class="technical-grid">
+                                <div class="technical-item">
+                                    <span><strong>Strike:</strong></span>
+                                    <span><strong>$${data.options_data.strike.toFixed(2)}</strong></span>
+                                </div>
+                                <div class="technical-item">
+                                    <span><strong>Premium:</strong></span>
+                                    <span><strong>$${data.options_data.premium.toFixed(2)}</strong></span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>Delta:</span>
+                                    <span>${data.options_data.delta.toFixed(3)}</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>DTE:</span>
+                                    <span>${data.options_data.dte} days</span>
+                                </div>
+                                <div class="technical-item" style="background: rgba(76, 175, 80, 0.3);">
+                                    <span><strong>ROR:</strong></span>
+                                    <span><strong>${data.options_data.ror.toFixed(2)}%</strong></span>
+                                </div>
+                                <div class="technical-item" style="background: rgba(76, 175, 80, 0.3);">
+                                    <span><strong>Annual ROR:</strong></span>
+                                    <span><strong>${data.options_data.annualized_ror.toFixed(1)}%</strong></span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>Theta/Day:</span>
+                                    <span>${data.options_data.theta_efficiency.toFixed(3)}%</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>Expiration:</span>
+                                    <span>${data.options_data.expiration}</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>Volume:</span>
+                                    <span>${data.options_data.volume}</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>Open Interest:</span>
+                                    <span>${data.options_data.open_interest}</span>
+                                </div>
+                            </div>
+                            <div style="margin-top: 10px; font-size: 0.85rem; opacity: 0.8;">
+                                <em>Note: Options data only available during market hours (9:30 AM - 4:00 PM ET)</em>
+                            </div>
+                        </div>
+                        ` : `
+                        <div style="margin-top: 15px; padding: 10px; background: rgba(255, 255, 255, 0.1); border-radius: 8px; font-size: 0.9rem; opacity: 0.8;">
+                            📊 Options data unavailable (market closed or no suitable options found)
+                        </div>
+                        `}
                     </div>
                 </div>
             `;

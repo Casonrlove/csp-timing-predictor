@@ -11,6 +11,7 @@ import joblib
 import os
 from datetime import datetime
 from data_collector import CSPDataCollector
+from options_analyzer import get_best_csp_option
 
 app = FastAPI(
     title="CSP Timing API",
@@ -42,6 +43,7 @@ class PredictionResponse(BaseModel):
     date: str
     model_type: str
     technical_context: dict
+    options_data: Optional[dict] = None
 
 
 class MultiTickerRequest(BaseModel):
@@ -124,11 +126,14 @@ def predict(request: PredictionRequest):
         current_data = collector.data.iloc[-1]
         current_price = float(current_data['Close'])
 
+        # Get options data (will be None if market closed)
+        options_data = get_best_csp_option(ticker)
+
         # Build technical context
         technical_context = {
             'support_resistance': {
-                'distance_from_support': float(current_data.get('Distance_From_Support', 0)),
-                'distance_from_resistance': float(current_data.get('Distance_From_Resistance', 0))
+                'distance_from_support': float(current_data.get('Distance_From_Support_Pct', 0)),
+                'distance_from_resistance': float(current_data.get('Distance_From_Resistance_Pct', 0))
             },
             'moving_averages': {
                 'price_to_sma20': float(current_data.get('Price_to_SMA20', 0)),
@@ -161,7 +166,8 @@ def predict(request: PredictionRequest):
             current_price=current_price,
             date=datetime.now().strftime('%Y-%m-%d'),
             model_type="Random Forest (Multi-Ticker)" if "multi" in MODEL_PATH else "Random Forest",
-            technical_context=technical_context
+            technical_context=technical_context,
+            options_data=options_data
         )
 
     except Exception as e:
