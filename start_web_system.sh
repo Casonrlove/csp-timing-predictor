@@ -19,19 +19,30 @@ echo ""
 
 # Start API server in background
 echo "Starting API server on port 8000..."
-python api_server.py &
+python api_server.py > api_server.log 2>&1 &
 API_PID=$!
 echo "✓ API server started (PID: $API_PID)"
-sleep 2
+echo "  (Logs: api_server.log)"
 
-# Test API
+# Wait for server to be ready
 echo ""
-echo "Testing API server..."
-curl -s http://localhost:8000/ > /dev/null
-if [ $? -eq 0 ]; then
-    echo "✓ API server is responding"
-else
-    echo "ERROR: API server not responding"
+echo "Waiting for API server to be ready..."
+MAX_WAIT=10
+WAITED=0
+while [ $WAITED -lt $MAX_WAIT ]; do
+    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        echo "✓ API server is responding"
+        break
+    fi
+    sleep 1
+    WAITED=$((WAITED + 1))
+    echo -n "."
+done
+
+if [ $WAITED -eq $MAX_WAIT ]; then
+    echo ""
+    echo "ERROR: API server not responding after ${MAX_WAIT}s"
+    echo "Check api_server.log for errors"
     kill $API_PID 2>/dev/null
     exit 1
 fi
@@ -44,6 +55,8 @@ echo ""
 echo "Local access:       http://localhost:8000"
 echo "API documentation:  http://localhost:8000/docs"
 echo ""
+echo "NOTE: GPU warning in logs is normal (using CPU for predictions)"
+echo ""
 echo "--------------------------------------------------------------------"
 echo "NEXT STEPS TO ACCESS FROM WORK:"
 echo "--------------------------------------------------------------------"
@@ -53,14 +66,14 @@ echo "   ngrok http 8000"
 echo ""
 echo "2. Copy the ngrok URL (https://xxxxx.ngrok.io)"
 echo ""
-echo "3. Deploy frontend to GitHub Pages:"
-echo "   - Create repo: csp-timing-predictor"
-echo "   - Push web/index.html"
-echo "   - Enable GitHub Pages in Settings"
+echo "3. Enable GitHub Pages (if not done yet):"
+echo "   - Go to: https://github.com/Casonrlove/csp-timing-predictor"
+echo "   - Settings → Pages → Source: main branch, / (root) → Save"
 echo ""
-echo "4. Open your GitHub Pages URL at work"
-echo "   Enter your ngrok URL in the settings"
-echo "   Get predictions!"
+echo "4. Open your GitHub Pages URL at work:"
+echo "   https://casonrlove.github.io/csp-timing-predictor/"
+echo ""
+echo "5. Enter your ngrok URL in the web interface and get predictions!"
 echo ""
 echo "--------------------------------------------------------------------"
 echo "To stop the server: kill $API_PID"
