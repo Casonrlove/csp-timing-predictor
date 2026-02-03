@@ -342,7 +342,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.1.0</div>
+            <div class="version">v1.2.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -686,6 +686,45 @@
                                 <em>Note: Options data only available during market hours (9:30 AM - 4:00 PM ET)</em>
                             </div>
                         </div>
+
+                        ${data.all_options && data.all_options.length > 1 ? `
+                        <div style="margin-top: 20px; background: rgba(255, 255, 255, 0.1); padding: 15px; border-radius: 8px;">
+                            <h4 style="margin: 0 0 12px 0;">📋 All Available Strikes (0.10-0.40 Delta)</h4>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                                    <thead>
+                                        <tr style="background: rgba(0, 0, 0, 0.3);">
+                                            <th style="padding: 8px; text-align: left;">Strike</th>
+                                            <th style="padding: 8px; text-align: right;">Delta</th>
+                                            <th style="padding: 8px; text-align: right;">Premium</th>
+                                            <th style="padding: 8px; text-align: right;">ROR</th>
+                                            <th style="padding: 8px; text-align: right;">Annual</th>
+                                            <th style="padding: 8px; text-align: right;">DTE</th>
+                                            <th style="padding: 8px; text-align: right;">Edge</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${data.all_options.map(opt => `
+                                            <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+                                                <td style="padding: 8px;"><strong>$${opt.strike.toFixed(2)}</strong></td>
+                                                <td style="padding: 8px; text-align: right;">${(Math.abs(opt.delta) * 100).toFixed(1)}%</td>
+                                                <td style="padding: 8px; text-align: right;">$${opt.premium.toFixed(2)}</td>
+                                                <td style="padding: 8px; text-align: right;">${opt.ror.toFixed(2)}%</td>
+                                                <td style="padding: 8px; text-align: right;">${opt.annualized_ror.toFixed(1)}%</td>
+                                                <td style="padding: 8px; text-align: right;">${opt.dte}d</td>
+                                                <td style="padding: 8px; text-align: right; color: ${opt.edge > 0 ? '#4CAF50' : '#f44336'};">
+                                                    ${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}pp
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div style="margin-top: 10px; font-size: 0.75rem; opacity: 0.7;">
+                                <em>💡 Higher delta = more premium, higher assignment risk. Lower delta = less premium, safer.</em>
+                            </div>
+                        </div>
+                        ` : ''}
                         ` : `
                         <div style="margin-top: 15px; padding: 10px; background: rgba(255, 255, 255, 0.1); border-radius: 8px; font-size: 0.9rem; opacity: 0.8;">
                             📊 Options data unavailable (market closed or no suitable options found)
