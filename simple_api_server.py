@@ -129,6 +129,23 @@ def predict(request: PredictionRequest):
         # Get options data (will be None if market closed)
         options_data = get_best_csp_option(ticker)
 
+        # Add edge calculation if options data available
+        if options_data:
+            # Market delta (as positive for comparison)
+            market_delta = abs(options_data['delta'])
+
+            # Model's probability of assignment (prob_bad)
+            model_prob_bad = float(probabilities[0])
+
+            # Edge: positive = market overpricing risk (good for us)
+            # Negative = market underpricing risk (bad for us)
+            edge = (market_delta - model_prob_bad) * 100  # As percentage points
+
+            options_data['market_delta'] = round(market_delta, 3)
+            options_data['model_prob_assignment'] = round(model_prob_bad, 3)
+            options_data['edge'] = round(edge, 2)
+            options_data['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
+
         # Build technical context
         technical_context = {
             'support_resistance': {

@@ -342,7 +342,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.0.4</div>
+            <div class="version">v1.0.5</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -580,10 +580,42 @@
                         ${data.options_data ? `
                         <div class="technical-section" style="background: rgba(255, 255, 255, 0.15); padding: 15px; border-radius: 8px; margin-top: 15px;">
                             <h4 style="color: #ffd700; margin-bottom: 12px;">📈 Suggested CSP Trade</h4>
+
+                            ${data.options_data.edge !== undefined ? `
+                            <div style="background: ${data.options_data.edge > 0 ? 'rgba(76, 175, 80, 0.4)' : 'rgba(244, 67, 54, 0.4)'}; padding: 12px; border-radius: 8px; margin-bottom: 15px; border: 2px solid ${data.options_data.edge > 0 ? '#4CAF50' : '#f44336'};">
+                                <div style="font-size: 1.1rem; font-weight: bold; margin-bottom: 8px;">
+                                    ${data.options_data.edge > 0 ? '✅ POSITIVE EDGE' : '⚠️ NEGATIVE EDGE'}
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; font-size: 0.9rem;">
+                                    <div>
+                                        <div style="opacity: 0.8;">Market Delta:</div>
+                                        <div style="font-weight: bold;">${(data.options_data.market_delta * 100).toFixed(1)}%</div>
+                                    </div>
+                                    <div>
+                                        <div style="opacity: 0.8;">Model Risk:</div>
+                                        <div style="font-weight: bold;">${(data.options_data.model_prob_assignment * 100).toFixed(1)}%</div>
+                                    </div>
+                                    <div>
+                                        <div style="opacity: 0.8;">Your Edge:</div>
+                                        <div style="font-weight: bold; color: ${data.options_data.edge > 0 ? '#4CAF50' : '#f44336'};">${data.options_data.edge > 0 ? '+' : ''}${data.options_data.edge.toFixed(1)}pp</div>
+                                    </div>
+                                </div>
+                                <div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.9;">
+                                    ${data.options_data.edge > 0 ?
+                                        '🎯 Market overpricing risk - favorable premium!' :
+                                        '⚠️ Market underpricing risk - proceed with caution'}
+                                </div>
+                            </div>
+                            ` : ''}
+
                             <div class="technical-grid">
                                 <div class="technical-item">
                                     <span><strong>Strike:</strong></span>
                                     <span><strong>$${data.options_data.strike.toFixed(2)}</strong></span>
+                                </div>
+                                <div class="technical-item">
+                                    <span><strong>Stock Price:</strong></span>
+                                    <span><strong>$${data.current_price.toFixed(2)}</strong></span>
                                 </div>
                                 <div class="technical-item">
                                     <span><strong>Premium:</strong></span>
@@ -620,6 +652,10 @@
                                 <div class="technical-item">
                                     <span>Open Interest:</span>
                                     <span>${data.options_data.open_interest}</span>
+                                </div>
+                                <div class="technical-item">
+                                    <span>Moneyness:</span>
+                                    <span>${(data.options_data.moneyness * 100).toFixed(2)}%</span>
                                 </div>
                             </div>
                             <div style="margin-top: 10px; font-size: 0.85rem; opacity: 0.8;">
