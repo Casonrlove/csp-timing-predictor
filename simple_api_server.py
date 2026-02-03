@@ -131,27 +131,24 @@ def predict(request: PredictionRequest):
         current_price = float(current_data['Close'])
 
         # Get ALL options data in the delta range
+        print(f"Fetching options for {ticker} with delta range {request.min_delta}-{request.max_delta}...")
         all_options = get_all_csp_options(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
+        print(f"Found {len(all_options)} options")
+
+        # Add edge calculation to ALL options
+        model_prob_bad = float(probabilities[0])
+
+        for option in all_options:
+            market_delta = abs(option['delta'])
+            edge = (market_delta - model_prob_bad) * 100  # As percentage points
+
+            option['market_delta'] = round(market_delta, 3)
+            option['model_prob_assignment'] = round(model_prob_bad, 3)
+            option['edge'] = round(edge, 2)
+            option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
 
         # Get the best one for backward compatibility
         options_data = all_options[0] if all_options else None
-
-        # Add edge calculation if options data available
-        if options_data:
-            # Market delta (as positive for comparison)
-            market_delta = abs(options_data['delta'])
-
-            # Model's probability of assignment (prob_bad)
-            model_prob_bad = float(probabilities[0])
-
-            # Edge: positive = market overpricing risk (good for us)
-            # Negative = market underpricing risk (bad for us)
-            edge = (market_delta - model_prob_bad) * 100  # As percentage points
-
-            options_data['market_delta'] = round(market_delta, 3)
-            options_data['model_prob_assignment'] = round(model_prob_bad, 3)
-            options_data['edge'] = round(edge, 2)
-            options_data['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
 
         # Build technical context
         technical_context = {
