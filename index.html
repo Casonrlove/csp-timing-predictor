@@ -27,6 +27,7 @@
             text-align: center;
             color: white;
             margin-bottom: 30px;
+            position: relative;
         }
 
         .header h1 {
@@ -37,6 +38,15 @@
         .header p {
             font-size: 1.1rem;
             opacity: 0.9;
+        }
+
+        .version {
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            font-size: 0.75rem;
+            opacity: 0.6;
+            color: white;
         }
 
         .card {
@@ -297,6 +307,7 @@
 <body>
     <div class="container">
         <div class="header">
+            <div class="version">v1.0.1</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
