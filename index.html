@@ -5,6 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSP Timing Predictor</title>
     <style>
+        /* Power E*Trade inspired dark theme */
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-card: #1c2128;
+            --border-color: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-purple: #6e40c9;
+            --accent-blue: #58a6ff;
+            --positive-green: #3fb950;
+            --negative-red: #f85149;
+            --warning-orange: #d29922;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -13,9 +28,10 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--bg-primary);
             min-height: 100vh;
             padding: 20px;
+            color: var(--text-primary);
         }
 
         .container {
@@ -25,7 +41,7 @@
 
         .header {
             text-align: center;
-            color: white;
+            color: var(--text-primary);
             margin-bottom: 30px;
             position: relative;
         }
@@ -33,11 +49,15 @@
         .header h1 {
             font-size: 2.5rem;
             margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
         .header p {
             font-size: 1.1rem;
-            opacity: 0.9;
+            color: var(--text-secondary);
         }
 
         .version {
@@ -45,16 +65,21 @@
             top: 5px;
             right: 10px;
             font-size: 0.75rem;
-            opacity: 0.6;
-            color: white;
+            color: var(--text-secondary);
         }
 
         .card {
-            background: white;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
             border-radius: 12px;
             padding: 30px;
             margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .card h2 {
+            color: var(--text-primary);
+            margin-bottom: 15px;
         }
 
         .config-section {
@@ -69,21 +94,27 @@
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
-            color: #333;
+            color: var(--text-secondary);
         }
 
         input[type="text"], select {
             width: 100%;
             padding: 12px;
-            border: 2px solid #e0e0e0;
+            border: 1px solid var(--border-color);
             border-radius: 8px;
             font-size: 16px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
             transition: border-color 0.3s;
         }
 
         input[type="text"]:focus, select:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: var(--accent-blue);
+        }
+
+        input[type="text"]::placeholder {
+            color: var(--text-secondary);
         }
 
         .button-group {
@@ -93,7 +124,7 @@
         }
 
         button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--accent-purple) 0%, var(--accent-blue) 100%);
             color: white;
             border: none;
             padding: 12px 24px;
@@ -106,7 +137,7 @@
 
         button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 5px 20px rgba(110, 64, 201, 0.4);
         }
 
         button:disabled {
@@ -118,12 +149,12 @@
         .loading {
             text-align: center;
             padding: 20px;
-            color: #667eea;
+            color: var(--accent-blue);
         }
 
         .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
+            border: 3px solid var(--border-color);
+            border-top: 3px solid var(--accent-blue);
             border-radius: 50%;
             width: 40px;
             height: 40px;
@@ -155,13 +186,15 @@
         }
 
         .result.good {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-            color: white;
+            background: linear-gradient(135deg, #0d4429 0%, #1a5d36 100%);
+            border: 2px solid var(--positive-green);
+            color: var(--text-primary);
         }
 
         .result.wait {
-            background: linear-gradient(135deg, #fc4a1a 0%, #f7b733 100%);
-            color: white;
+            background: linear-gradient(135deg, #4a1d1d 0%, #5c2929 100%);
+            border: 2px solid var(--negative-red);
+            color: var(--text-primary);
         }
 
         .result-header {
@@ -182,20 +215,22 @@
         }
 
         .confidence-bar {
-            background: rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.1);
             height: 30px;
             border-radius: 15px;
             overflow: hidden;
             margin: 15px 0;
+            border: 1px solid var(--border-color);
         }
 
         .confidence-fill {
-            background: white;
+            background: linear-gradient(90deg, var(--accent-purple), var(--accent-blue));
             height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: bold;
+            color: white;
             transition: width 0.5s ease-out;
         }
 
@@ -207,26 +242,28 @@
         }
 
         .info-box {
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
             padding: 12px;
             border-radius: 8px;
+            border: 1px solid var(--border-color);
         }
 
         .info-label {
             font-size: 0.9rem;
-            opacity: 0.9;
+            color: var(--text-secondary);
             margin-bottom: 4px;
         }
 
         .info-value {
             font-size: 1.3rem;
             font-weight: bold;
+            color: var(--text-primary);
         }
 
         .technical-details {
             margin-top: 20px;
             padding-top: 20px;
-            border-top: 2px solid rgba(255, 255, 255, 0.3);
+            border-top: 1px solid var(--border-color);
         }
 
         .technical-section {
@@ -235,7 +272,7 @@
 
         .technical-section h4 {
             margin-bottom: 8px;
-            opacity: 0.9;
+            color: var(--text-secondary);
         }
 
         .technical-grid {
@@ -245,11 +282,12 @@
         }
 
         .technical-item {
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
             padding: 8px 12px;
             border-radius: 6px;
             display: flex;
             justify-content: space-between;
+            border: 1px solid var(--border-color);
         }
 
         .multi-results {
@@ -272,31 +310,36 @@
             align-items: center;
             gap: 8px;
             padding: 8px;
-            background: #f8f8f8;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
             border-radius: 6px;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: background 0.2s, border-color 0.2s;
         }
 
         .ticker-checkbox-item:hover {
-            background: #e8e8ff;
+            background: rgba(110, 64, 201, 0.2);
+            border-color: var(--accent-purple);
         }
 
         .ticker-checkbox-item input[type="checkbox"] {
             width: 18px;
             height: 18px;
             cursor: pointer;
+            accent-color: var(--accent-purple);
         }
 
         .ticker-checkbox-item label {
             margin: 0;
             cursor: pointer;
             font-weight: 600;
+            color: var(--text-primary);
         }
 
         .error {
-            background: #ff4444;
-            color: white;
+            background: linear-gradient(135deg, #4a1d1d 0%, #5c2929 100%);
+            border: 1px solid var(--negative-red);
+            color: var(--text-primary);
             padding: 15px;
             border-radius: 8px;
             margin-top: 20px;
@@ -310,18 +353,23 @@
         }
 
         .quick-ticker {
-            background: #f0f0f0;
-            border: 2px solid #e0e0e0;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
             padding: 8px 16px;
             border-radius: 6px;
             cursor: pointer;
+            color: var(--text-primary);
             transition: all 0.2s;
         }
 
         .quick-ticker:hover {
-            background: #667eea;
+            background: var(--accent-purple);
             color: white;
-            border-color: #667eea;
+            border-color: var(--accent-purple);
+        }
+
+        small {
+            color: var(--text-secondary) !important;
         }
 
         @media (max-width: 768px) {
@@ -342,7 +390,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.2.0</div>
+            <div class="version">v1.3.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -617,11 +665,11 @@
                         </div>
 
                         ${data.options_data ? `
-                        <div class="technical-section" style="background: rgba(255, 255, 255, 0.15); padding: 15px; border-radius: 8px; margin-top: 15px;">
-                            <h4 style="color: #ffd700; margin-bottom: 12px;">📈 Suggested CSP Trade</h4>
+                        <div class="technical-section" style="background: rgba(22, 27, 34, 0.8); padding: 15px; border-radius: 8px; margin-top: 15px; border: 1px solid #30363d;">
+                            <h4 style="color: #58a6ff; margin-bottom: 12px;">📈 Suggested CSP Trade</h4>
 
                             ${data.options_data.edge !== undefined ? `
-                            <div style="background: ${data.options_data.edge > 0 ? 'rgba(76, 175, 80, 0.4)' : 'rgba(244, 67, 54, 0.4)'}; padding: 12px; border-radius: 8px; margin-bottom: 15px; border: 2px solid ${data.options_data.edge > 0 ? '#4CAF50' : '#f44336'};">
+                            <div style="background: ${data.options_data.edge > 0 ? 'rgba(63, 185, 80, 0.2)' : 'rgba(248, 81, 73, 0.2)'}; padding: 12px; border-radius: 8px; margin-bottom: 15px; border: 2px solid ${data.options_data.edge > 0 ? '#3fb950' : '#f85149'};">
                                 <div style="font-size: 1.1rem; font-weight: bold; margin-bottom: 8px;">
                                     ${data.options_data.edge > 0 ? '✅ POSITIVE EDGE' : '⚠️ NEGATIVE EDGE'}
                                 </div>
@@ -636,7 +684,7 @@
                                     </div>
                                     <div>
                                         <div style="opacity: 0.8;">Your Edge:</div>
-                                        <div style="font-weight: bold; color: ${data.options_data.edge > 0 ? '#4CAF50' : '#f44336'};">${data.options_data.edge > 0 ? '+' : ''}${data.options_data.edge.toFixed(1)}pp</div>
+                                        <div style="font-weight: bold; color: ${data.options_data.edge > 0 ? '#3fb950' : '#f85149'};">${data.options_data.edge > 0 ? '+' : ''}${data.options_data.edge.toFixed(1)}pp</div>
                                     </div>
                                 </div>
                                 <div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.9;">
@@ -668,13 +716,13 @@
                                     <span>DTE:</span>
                                     <span>${data.options_data.dte} days</span>
                                 </div>
-                                <div class="technical-item" style="background: rgba(76, 175, 80, 0.3);">
+                                <div class="technical-item" style="background: rgba(63, 185, 80, 0.2); border-color: #3fb950;">
                                     <span><strong>ROR:</strong></span>
-                                    <span><strong>${data.options_data.ror.toFixed(2)}%</strong></span>
+                                    <span><strong style="color: #3fb950;">${data.options_data.ror.toFixed(2)}%</strong></span>
                                 </div>
-                                <div class="technical-item" style="background: rgba(76, 175, 80, 0.3);">
+                                <div class="technical-item" style="background: rgba(63, 185, 80, 0.2); border-color: #3fb950;">
                                     <span><strong>Annual ROR:</strong></span>
-                                    <span><strong>${data.options_data.annualized_ror.toFixed(1)}%</strong></span>
+                                    <span><strong style="color: #3fb950;">${data.options_data.annualized_ror.toFixed(1)}%</strong></span>
                                 </div>
                                 <div class="technical-item">
                                     <span>Theta/Day:</span>
@@ -698,8 +746,8 @@
                                 </div>
                             </div>
 
-                            <div style="margin-top: 15px; padding: 10px; background: rgba(0, 0, 0, 0.2); border-radius: 6px;">
-                                <h5 style="margin: 0 0 8px 0; font-size: 0.9rem;">📊 Advanced Greeks</h5>
+                            <div style="margin-top: 15px; padding: 10px; background: #21262d; border-radius: 6px; border: 1px solid #30363d;">
+                                <h5 style="margin: 0 0 8px 0; font-size: 0.9rem; color: #8b949e;">📊 Advanced Greeks</h5>
                                 <div class="technical-grid" style="font-size: 0.85rem;">
                                     <div class="technical-item">
                                         <span>Gamma:</span>
@@ -720,40 +768,40 @@
                                 </div>
                             </div>
 
-                            <div style="margin-top: 10px; font-size: 0.85rem; opacity: 0.8;">
+                            <div style="margin-top: 10px; font-size: 0.85rem; color: #8b949e;">
                                 <em>✓ Greeks calculated using ${data.options_data.model_used} with real market IV</em><br>
                                 <em>Note: Options data only available during market hours (9:30 AM - 4:00 PM ET)</em>
                             </div>
                         </div>
 
                         ${data.all_options && data.all_options.length > 1 ? `
-                        <div style="margin-top: 20px; background: rgba(255, 255, 255, 0.1); padding: 15px; border-radius: 8px;">
-                            <h4 style="margin: 0 0 12px 0;">📋 All Available Strikes</h4>
+                        <div style="margin-top: 20px; background: rgba(22, 27, 34, 0.8); padding: 15px; border-radius: 8px; border: 1px solid #30363d;">
+                            <h4 style="margin: 0 0 12px 0; color: #58a6ff;">📋 All Available Strikes</h4>
                             <div style="overflow-x: auto;">
                                 <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                                     <thead>
-                                        <tr style="background: rgba(0, 0, 0, 0.3);">
-                                            <th style="padding: 8px; text-align: left;">Strike</th>
-                                            <th style="padding: 8px; text-align: right;">Market<br/>Delta</th>
-                                            <th style="padding: 8px; text-align: right;">Model<br/>Risk</th>
-                                            <th style="padding: 8px; text-align: right;">Premium</th>
-                                            <th style="padding: 8px; text-align: right;">ROR</th>
-                                            <th style="padding: 8px; text-align: right;">Annual</th>
-                                            <th style="padding: 8px; text-align: right;">DTE</th>
-                                            <th style="padding: 8px; text-align: right;">Edge</th>
+                                        <tr style="background: #21262d;">
+                                            <th style="padding: 8px; text-align: left; color: #8b949e;">Strike</th>
+                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Market<br/>Delta</th>
+                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Model<br/>Risk</th>
+                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Premium</th>
+                                            <th style="padding: 8px; text-align: right; color: #8b949e;">ROR</th>
+                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Annual</th>
+                                            <th style="padding: 8px; text-align: right; color: #8b949e;">DTE</th>
+                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Edge</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         ${data.all_options.map(opt => `
-                                            <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); ${opt.is_closest_atm ? 'background: rgba(255, 215, 0, 0.2); border-left: 3px solid #FFD700;' : ''}">
+                                            <tr style="border-bottom: 1px solid #30363d; ${opt.is_closest_atm ? 'background: rgba(110, 64, 201, 0.15); border-left: 3px solid #6e40c9;' : ''}">
                                                 <td style="padding: 8px;"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_closest_atm ? ' ⭐' : ''}</td>
                                                 <td style="padding: 8px; text-align: right;">${(opt.market_delta * 100).toFixed(1)}%</td>
-                                                <td style="padding: 8px; text-align: right; color: #FFD700;">${(opt.model_prob_assignment * 100).toFixed(1)}%</td>
+                                                <td style="padding: 8px; text-align: right; color: #58a6ff;">${(opt.model_prob_assignment * 100).toFixed(1)}%</td>
                                                 <td style="padding: 8px; text-align: right;">$${opt.premium.toFixed(2)}</td>
                                                 <td style="padding: 8px; text-align: right;">${opt.ror.toFixed(2)}%</td>
                                                 <td style="padding: 8px; text-align: right;">${opt.annualized_ror.toFixed(1)}%</td>
                                                 <td style="padding: 8px; text-align: right;">${opt.dte}d</td>
-                                                <td style="padding: 8px; text-align: right; font-weight: bold; color: ${opt.edge > 0 ? '#4CAF50' : '#f44336'};">
+                                                <td style="padding: 8px; text-align: right; font-weight: bold; color: ${opt.edge > 0 ? '#3fb950' : '#f85149'};">
                                                     ${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}pp
                                                 </td>
                                             </tr>
@@ -761,13 +809,13 @@
                                     </tbody>
                                 </table>
                             </div>
-                            <div style="margin-top: 10px; font-size: 0.75rem; opacity: 0.7;">
+                            <div style="margin-top: 10px; font-size: 0.75rem; color: #8b949e;">
                                 <em>💡 Edge = Market Delta - Model Risk. Positive edge means market is paying you more than the model says the risk is worth.</em>
                             </div>
                         </div>
                         ` : ''}
                         ` : `
-                        <div style="margin-top: 15px; padding: 10px; background: rgba(255, 255, 255, 0.1); border-radius: 8px; font-size: 0.9rem; opacity: 0.8;">
+                        <div style="margin-top: 15px; padding: 10px; background: #21262d; border: 1px solid #30363d; border-radius: 8px; font-size: 0.9rem; color: #8b949e;">
                             📊 Options data unavailable (market closed or no suitable options found)
                         </div>
                         `}
