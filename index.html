@@ -707,8 +707,8 @@
                                     </thead>
                                     <tbody>
                                         ${data.all_options.map(opt => `
-                                            <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
-                                                <td style="padding: 8px;"><strong>$${opt.strike.toFixed(2)}</strong></td>
+                                            <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); ${opt.is_closest_atm ? 'background: rgba(255, 215, 0, 0.2); border-left: 3px solid #FFD700;' : ''}">
+                                                <td style="padding: 8px;"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_closest_atm ? ' ⭐' : ''}</td>
                                                 <td style="padding: 8px; text-align: right;">${(opt.market_delta * 100).toFixed(1)}%</td>
                                                 <td style="padding: 8px; text-align: right; color: #FFD700;">${(opt.model_prob_assignment * 100).toFixed(1)}%</td>
                                                 <td style="padding: 8px; text-align: right;">$${opt.premium.toFixed(2)}</td>

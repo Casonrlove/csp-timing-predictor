@@ -138,17 +138,44 @@ def predict(request: PredictionRequest):
             all_options = get_all_csp_options(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
             print(f"Found {len(all_options)} options")
 
-            # Add edge calculation to ALL options
-            model_prob_bad = float(probabilities[0])
+            # Add edge calculation with SCALED model risk per strike
+            model_prob_bad = float(probabilities[0])  # Model's prediction (prob of >5% drop)
+            model_threshold_pct = 0.05  # Model threshold is 5% drop
+
+            # Find the strike closest to 5% OTM to calibrate
+            threshold_strike = current_price * (1 - model_threshold_pct)
+            threshold_delta = None
+            for opt in all_options:
+                otm_pct = (current_price - opt['strike']) / current_price
+                if abs(otm_pct - model_threshold_pct) < 0.02:
+                    threshold_delta = abs(opt['delta'])
+                    break
+
+            # Risk factor: how model's view differs from market at threshold
+            # e.g., model=21%, market delta at 5% OTM=16% → factor=1.31 (model more bearish)
+            if threshold_delta and threshold_delta > 0:
+                risk_factor = model_prob_bad / threshold_delta
+            else:
+                risk_factor = 1.0
 
             for option in all_options:
                 market_delta = abs(option['delta'])
-                edge = (market_delta - model_prob_bad) * 100  # As percentage points
+
+                # Scale each strike's risk by the factor
+                model_risk_at_strike = market_delta * risk_factor
+                model_risk_at_strike = max(0.01, min(0.60, model_risk_at_strike))
+
+                # Edge = market - model (positive = good for selling)
+                edge = (market_delta - model_risk_at_strike) * 100
 
                 option['market_delta'] = round(market_delta, 3)
-                option['model_prob_assignment'] = round(model_prob_bad, 3)
+                option['model_prob_assignment'] = round(model_risk_at_strike, 3)
                 option['edge'] = round(edge, 2)
                 option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
+                option['is_closest_atm'] = False
+
+            if all_options:
+                all_options[0]['is_closest_atm'] = True
 
             # Get the best one for backward compatibility
             options_data = all_options[0] if all_options else None
