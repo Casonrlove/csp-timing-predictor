@@ -30,13 +30,21 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: var(--bg-primary);
             min-height: 100vh;
-            padding: 20px;
+            padding: 15px;
             color: var(--text-primary);
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 100%;
+            width: 100%;
             margin: 0 auto;
+            padding: 0 10px;
+        }
+
+        @media (min-width: 1400px) {
+            .container {
+                max-width: 95%;
+            }
         }
 
         .header {
@@ -372,9 +380,46 @@
             color: var(--text-secondary) !important;
         }
 
+        /* Tablet */
+        @media (max-width: 1024px) {
+            .container {
+                padding: 0 15px;
+            }
+
+            .card {
+                padding: 20px;
+            }
+
+            .technical-grid {
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) !important;
+            }
+        }
+
+        /* Mobile */
         @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                padding: 0 5px;
+            }
+
             .header h1 {
-                font-size: 2rem;
+                font-size: 1.6rem;
+            }
+
+            .header p {
+                font-size: 0.95rem;
+            }
+
+            .card {
+                padding: 15px;
+                border-radius: 8px;
+            }
+
+            .card h2 {
+                font-size: 1.2rem;
             }
 
             .button-group {
@@ -383,6 +428,96 @@
 
             button {
                 width: 100%;
+                padding: 14px 20px;
+            }
+
+            .quick-tickers {
+                gap: 6px;
+            }
+
+            .quick-ticker {
+                padding: 8px 12px;
+                font-size: 0.9rem;
+            }
+
+            .ticker-checkboxes {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 6px;
+            }
+
+            .ticker-checkbox-item {
+                padding: 6px;
+                font-size: 0.85rem;
+            }
+
+            .result-header {
+                flex-direction: column;
+                gap: 10px;
+                text-align: center;
+            }
+
+            .ticker-name {
+                font-size: 1.5rem !important;
+            }
+
+            .prediction {
+                font-size: 1.1rem !important;
+            }
+
+            .price-info {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 10px !important;
+            }
+
+            .info-box {
+                padding: 10px;
+            }
+
+            .info-value {
+                font-size: 1.1rem !important;
+            }
+
+            .technical-grid {
+                grid-template-columns: 1fr !important;
+                gap: 8px !important;
+            }
+
+            .technical-item {
+                padding: 10px;
+                font-size: 0.9rem;
+            }
+
+            .multi-results {
+                grid-template-columns: 1fr !important;
+            }
+
+            input[type="text"] {
+                font-size: 16px; /* Prevents zoom on iOS */
+            }
+        }
+
+        /* Small mobile */
+        @media (max-width: 480px) {
+            .header h1 {
+                font-size: 1.4rem;
+            }
+
+            .ticker-checkboxes {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .price-info {
+                grid-template-columns: 1fr !important;
+            }
+
+            .quick-tickers {
+                justify-content: center;
+            }
+
+            .quick-ticker {
+                flex: 1 1 calc(33% - 6px);
+                text-align: center;
+                min-width: 60px;
             }
         }
     </style>
@@ -390,7 +525,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.4.1</div>
+            <div class="version">v1.5.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
