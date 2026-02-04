@@ -390,7 +390,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.3.0</div>
+            <div class="version">v1.3.1</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -402,16 +402,6 @@
                 <small style="color: #666; display: block; margin-top: 5px;">
                     Get this from ngrok after starting your local server
                 </small>
-            </div>
-            <div class="input-group">
-                <label for="modelType">Model Type</label>
-                <select id="modelType">
-                    <option value="hybrid">Hybrid (Recommended)</option>
-                    <option value="lstm">LSTM</option>
-                    <option value="transformer">Transformer</option>
-                    <option value="tabnet">TabNet</option>
-                    <option value="tabnet_multi">TabNet Multi-Ticker</option>
-                </select>
             </div>
         </div>
 
@@ -542,7 +532,6 @@
 
         async function predictSingle() {
             const ticker = document.getElementById('ticker').value.trim().toUpperCase();
-            const modelType = document.getElementById('modelType').value;
             const resultDiv = document.getElementById('singleResult');
 
             if (!ticker) {
@@ -560,8 +549,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        ticker: ticker,
-                        model_type: modelType
+                        ticker: ticker
                     })
                 });
 
@@ -827,7 +815,6 @@
         }
 
         async function predictMulti() {
-            const modelType = document.getElementById('modelType').value;
             const resultDiv = document.getElementById('multiResults');
 
             // Get tickers from checkboxes
@@ -858,8 +845,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        tickers: tickers,
-                        model_type: modelType
+                        tickers: tickers
                     })
                 });
 
