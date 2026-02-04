@@ -390,9 +390,20 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.4.0</div>
+            <div class="version">v1.4.1</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
+        </div>
+
+        <div id="tokenWarning" style="display: none; background: linear-gradient(135deg, #5c2929 0%, #4a1d1d 100%); border: 2px solid #f85149; border-radius: 8px; padding: 15px; margin-bottom: 20px; color: white;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 1.5rem;">⚠️</span>
+                <div>
+                    <strong>Schwab Token Expiring Soon!</strong>
+                    <p style="margin: 5px 0 0 0; font-size: 0.9rem;" id="tokenWarningText"></p>
+                    <a id="reauthLink" href="#" target="_blank" style="color: #58a6ff; font-size: 0.9rem;">Click here to re-authorize</a>
+                </div>
+            </div>
         </div>
 
         <div class="card config-section">
@@ -516,6 +527,38 @@
         apiUrlInput.addEventListener('change', () => {
             localStorage.setItem('apiUrl', apiUrlInput.value);
         });
+
+        // Check Schwab token status on page load
+        async function checkTokenStatus() {
+            try {
+                const apiUrl = apiUrlInput.value.trim();
+                if (!apiUrl) return;
+
+                const response = await fetch(`${apiUrl}/token/status`);
+                if (!response.ok) return;
+
+                const data = await response.json();
+                const warningDiv = document.getElementById('tokenWarning');
+                const warningText = document.getElementById('tokenWarningText');
+                const reauthLink = document.getElementById('reauthLink');
+
+                if (data.status === 'expiring_soon' || (data.refresh_token_expires_in_days && data.refresh_token_expires_in_days < 2)) {
+                    warningText.textContent = `Token expires in ${data.refresh_token_expires_in_days.toFixed(1)} days. Re-authorize to keep using Schwab API.`;
+                    if (data.reauth_url) {
+                        reauthLink.href = data.reauth_url;
+                    }
+                    warningDiv.style.display = 'block';
+                } else {
+                    warningDiv.style.display = 'none';
+                }
+            } catch (e) {
+                // Silently fail - don't show warning if can't check
+                console.log('Token status check failed:', e);
+            }
+        }
+
+        // Check token status on page load
+        setTimeout(checkTokenStatus, 1000);
 
         function setTicker(ticker) {
             document.getElementById('ticker').value = ticker;

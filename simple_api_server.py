@@ -10,7 +10,7 @@ from typing import List, Optional
 import uvicorn
 import joblib
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from data_collector import CSPDataCollector
 from options_analyzer import get_best_csp_option
 from options_analyzer_multi import get_all_csp_options
@@ -168,6 +168,43 @@ def market_hours():
             "message": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+
+@app.get("/token/status")
+def token_status():
+    """Check Schwab token expiration status"""
+    if not SCHWAB_AVAILABLE:
+        return {"status": "unavailable", "message": "Schwab API not configured"}
+
+    try:
+        import json
+        from datetime import datetime
+        config_path = os.path.join(os.path.dirname(__file__), 'schwab_config.json')
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+
+        if not config.get('token_expires_at'):
+            return {"status": "unknown", "message": "No token expiration info"}
+
+        # Access token expiry (30 min)
+        access_expires = datetime.fromisoformat(config['token_expires_at'])
+        access_remaining = (access_expires - datetime.now()).total_seconds()
+
+        # Refresh token expires 7 days after last refresh
+        # We estimate based on access token (refresh happens when access expires)
+        refresh_expires_approx = access_expires + timedelta(days=7)
+        refresh_remaining = (refresh_expires_approx - datetime.now()).total_seconds()
+        refresh_days = refresh_remaining / 86400
+
+        return {
+            "status": "ok" if refresh_days > 1 else "expiring_soon",
+            "access_token_expires_in_minutes": round(access_remaining / 60, 1),
+            "refresh_token_expires_in_days": round(refresh_days, 1),
+            "warning": "Re-authorize soon!" if refresh_days < 2 else None,
+            "reauth_url": "https://api.schwabapi.com/v1/oauth/authorize?response_type=code&client_id=" + config['client_id'] + "&scope=readonly&redirect_uri=https%3A%2F%2Fdeveloper.schwab.com%2Foauth2-redirect.html" if refresh_days < 2 else None
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/market/status")
