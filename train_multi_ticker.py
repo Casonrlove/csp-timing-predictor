@@ -17,16 +17,24 @@ from data_collector import CSPDataCollector
 class MultiTickerTrainer:
     """Train model on multiple tickers"""
 
-    def __init__(self, tickers=None):
+    def __init__(self, tickers=None, model_type='random_forest'):
+        """
+        Initialize trainer.
+
+        Args:
+            tickers: List of stock tickers to train on
+            model_type: 'random_forest' (default) or 'xgboost'
+        """
         if tickers is None:
             # Default tech-heavy watchlist
-            self.tickers = ['NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN']
+            self.tickers = ['NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'TQQQ', 'SQQQ', 'PLTR', 'VOO']
         else:
             self.tickers = tickers
 
         self.scaler = StandardScaler()
         self.model = None
         self.feature_cols = None
+        self.model_type = model_type.lower()
 
     def collect_data(self, period='10y'):
         """Collect data from all tickers"""
@@ -92,26 +100,57 @@ class MultiTickerTrainer:
         X_train_scaled = self.scaler.fit_transform(X_train)
         X_test_scaled = self.scaler.transform(X_test)
 
-        # Train Random Forest (best performer from single-ticker)
+        # Train the selected model type
         print("\n" + "="*70)
-        print("Training Random Forest...")
-        print("="*70)
 
-        self.model = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=15,
-            min_samples_split=10,
-            min_samples_leaf=4,
-            class_weight='balanced',
-            random_state=42,
-            n_jobs=-1
-        )
+        if self.model_type == 'xgboost':
+            print("Training XGBoost...")
+            print("="*70)
 
-        self.model.fit(X_train, y_train)
+            # Calculate scale_pos_weight for imbalanced classes
+            neg_count = (y_train == 0).sum()
+            pos_count = (y_train == 1).sum()
+            scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1
 
-        # Evaluate
-        y_pred = self.model.predict(X_test)
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]
+            self.model = xgb.XGBClassifier(
+                n_estimators=200,
+                max_depth=8,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                scale_pos_weight=scale_pos_weight,
+                random_state=42,
+                n_jobs=-1,
+                eval_metric='auc'
+            )
+
+            # XGBoost works better with scaled features
+            self.model.fit(X_train_scaled, y_train)
+
+        else:  # Default: random_forest
+            print("Training Random Forest...")
+            print("="*70)
+
+            self.model = RandomForestClassifier(
+                n_estimators=200,
+                max_depth=15,
+                min_samples_split=10,
+                min_samples_leaf=4,
+                class_weight='balanced',
+                random_state=42,
+                n_jobs=-1
+            )
+
+            # Random Forest doesn't need scaled features
+            self.model.fit(X_train, y_train)
+
+        # Evaluate (use scaled features for XGBoost)
+        if self.model_type == 'xgboost':
+            y_pred = self.model.predict(X_test_scaled)
+            y_pred_proba = self.model.predict_proba(X_test_scaled)[:, 1]
+        else:
+            y_pred = self.model.predict(X_test)
+            y_pred_proba = self.model.predict_proba(X_test)[:, 1]
 
         print("\n" + "="*70)
         print("MULTI-TICKER MODEL - TEST SET RESULTS")
@@ -139,7 +178,11 @@ class MultiTickerTrainer:
             if len(ticker_X) < 10:
                 continue
 
-            ticker_pred_proba = self.model.predict_proba(ticker_X)[:, 1]
+            if self.model_type == 'xgboost':
+                ticker_X_scaled = self.scaler.transform(ticker_X)
+                ticker_pred_proba = self.model.predict_proba(ticker_X_scaled)[:, 1]
+            else:
+                ticker_pred_proba = self.model.predict_proba(ticker_X)[:, 1]
             ticker_roc = roc_auc_score(ticker_y, ticker_pred_proba)
 
             print(f"{ticker:6s}: {len(ticker_X):4d} samples | ROC-AUC: {ticker_roc:.4f}")
@@ -183,27 +226,46 @@ class MultiTickerTrainer:
 
 
 if __name__ == "__main__":
-    # Define watchlist
-    TICKERS = ['NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN']
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Train CSP timing model on multiple tickers')
+    parser.add_argument('--model', type=str, default='random_forest',
+                        choices=['random_forest', 'xgboost'],
+                        help='Model type: random_forest (default) or xgboost')
+    parser.add_argument('--tickers', type=str, nargs='+',
+                        default=['NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN'],
+                        help='List of tickers to train on')
+    parser.add_argument('--period', type=str, default='10y',
+                        help='Data period: 1y, 2y, 5y, 10y (default: 10y)')
+    parser.add_argument('--output', type=str, default='csp_model_multi.pkl',
+                        help='Output model filename')
+
+    args = parser.parse_args()
 
     print("="*70)
     print("MULTI-TICKER CSP TIMING MODEL")
     print("="*70)
-    print(f"\nTraining on: {', '.join(TICKERS)}")
+    print(f"\nModel type: {args.model.upper()}")
+    print(f"Training on: {', '.join(args.tickers)}")
+    print(f"Data period: {args.period}")
     print("This creates a model that generalizes across different stocks")
     print("")
 
     # Train
-    trainer = MultiTickerTrainer(TICKERS)
-    df = trainer.collect_data(period='10y')
+    trainer = MultiTickerTrainer(args.tickers, model_type=args.model)
+    df = trainer.collect_data(period=args.period)
     trainer.train(df)
     trainer.plot_feature_importance()
-    trainer.save_model('csp_model_multi.pkl')
+    trainer.save_model(args.output)
 
     print("\n" + "="*70)
     print("TRAINING COMPLETE!")
     print("="*70)
-    print("\nTo use the multi-ticker model:")
+    print(f"\nModel saved to: {args.output}")
+    print(f"Model type: {args.model}")
+    print("\nTo use the model:")
     print("  python predictor.py NVDA")
     print("  (it will automatically use csp_model_multi.pkl if available)")
+    print("\nTo train with XGBoost:")
+    print("  python train_multi_ticker.py --model xgboost")
     print("")
