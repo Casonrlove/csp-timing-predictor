@@ -390,7 +390,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.3.1</div>
+            <div class="version">v1.4.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -582,6 +582,17 @@
                         </div>
                     </div>
 
+                    ${data.data_source ? `
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; font-size: 0.75rem;">
+                        <span style="background: ${data.data_source.price === 'Schwab' ? 'rgba(35, 134, 54, 0.8)' : 'rgba(110, 64, 201, 0.8)'}; padding: 4px 10px; border-radius: 4px;">
+                            📊 Price: ${data.data_source.price}
+                        </span>
+                        <span style="background: ${data.data_source.greeks.includes('Schwab') ? 'rgba(35, 134, 54, 0.8)' : 'rgba(110, 64, 201, 0.8)'}; padding: 4px 10px; border-radius: 4px;">
+                            🔢 Greeks: ${data.data_source.greeks.includes('Schwab') ? 'Schwab API' : 'Black-Scholes'}
+                        </span>
+                    </div>
+                    ` : ''}
+
                     <div class="price-info">
                         <div class="info-box">
                             <div class="info-label">Current Price</div>
@@ -757,7 +768,16 @@
                             </div>
 
                             <div style="margin-top: 10px; font-size: 0.85rem; color: #8b949e;">
-                                <em>✓ Greeks calculated using ${data.options_data.model_used} with real market IV</em><br>
+                                ${data.data_source ? `
+                                <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;">
+                                    <span style="background: ${data.data_source.greeks.includes('Schwab') ? '#238636' : '#6e40c9'}; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem;">
+                                        Greeks: ${data.data_source.greeks}
+                                    </span>
+                                    <span style="background: ${data.data_source.price === 'Schwab' ? '#238636' : '#6e40c9'}; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem;">
+                                        Price: ${data.data_source.price}
+                                    </span>
+                                </div>
+                                ` : ''}
                                 <em>Note: Options data only available during market hours (9:30 AM - 4:00 PM ET)</em>
                             </div>
                         </div>

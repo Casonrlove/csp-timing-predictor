@@ -1,5 +1,6 @@
 """
-Simple FastAPI server for CSP timing predictions using Random Forest model
+Simple FastAPI server for CSP timing predictions
+Supports both Schwab API (preferred) and Yahoo Finance (fallback) for options data
 """
 
 from fastapi import FastAPI, HTTPException
@@ -13,6 +14,22 @@ from datetime import datetime
 from data_collector import CSPDataCollector
 from options_analyzer import get_best_csp_option
 from options_analyzer_multi import get_all_csp_options
+
+# Try to import Schwab client (optional)
+try:
+    from schwab_client import (
+        get_csp_options_schwab,
+        is_market_open,
+        get_market_hours,
+        get_stock_price,
+        get_quotes
+    )
+    SCHWAB_AVAILABLE = True
+    print("✓ Schwab API client loaded")
+except ImportError as e:
+    SCHWAB_AVAILABLE = False
+    print(f"⚠ Schwab API not available: {e}")
+    print("  Using Yahoo Finance for market data")
 
 app = FastAPI(
     title="CSP Timing API",
@@ -48,6 +65,7 @@ class PredictionResponse(BaseModel):
     technical_context: dict
     options_data: Optional[dict] = None
     all_options: Optional[list] = None
+    data_source: Optional[dict] = None  # Shows where data came from (Schwab vs Yahoo)
 
 
 class MultiTickerRequest(BaseModel):
@@ -98,6 +116,94 @@ def health_check():
     }
 
 
+@app.post("/reload")
+def reload_model():
+    """Reload the model from disk without restarting the server"""
+    global MODEL, SCALER, FEATURE_NAMES, MODEL_PATH
+
+    for path in ['csp_model_multi.pkl', 'csp_model.pkl']:
+        if os.path.exists(path):
+            MODEL_PATH = path
+            print(f"Reloading model from {MODEL_PATH}...")
+            model_data = joblib.load(MODEL_PATH)
+            MODEL = model_data['model']
+            SCALER = model_data['scaler']
+            FEATURE_NAMES = model_data.get('feature_names') or model_data.get('feature_cols')
+            print(f"✓ Model reloaded: {MODEL}")
+            return {
+                "status": "success",
+                "message": f"Model reloaded from {MODEL_PATH}",
+                "model_type": type(MODEL).__name__,
+                "timestamp": datetime.now().isoformat()
+            }
+
+    raise HTTPException(status_code=404, detail="No model file found")
+
+
+@app.get("/market/hours")
+def market_hours():
+    """Get market hours and check if market is open"""
+    if not SCHWAB_AVAILABLE:
+        return {
+            "status": "unavailable",
+            "message": "Schwab API not configured. Market hours not available.",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    try:
+        hours = get_market_hours(['equity', 'option'])
+        equity_open = is_market_open('equity')
+        option_open = is_market_open('option')
+
+        return {
+            "status": "success",
+            "equity_market_open": equity_open,
+            "option_market_open": option_open,
+            "hours": hours,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.get("/market/status")
+def market_status():
+    """Quick check if markets are open"""
+    if not SCHWAB_AVAILABLE:
+        # Fallback: estimate based on time (rough check)
+        now = datetime.now()
+        # Market hours: 9:30 AM - 4:00 PM ET (roughly)
+        hour = now.hour
+        weekday = now.weekday()
+        is_weekday = weekday < 5
+        is_market_hours = 9 <= hour < 16
+
+        return {
+            "equity_open": is_weekday and is_market_hours,
+            "option_open": is_weekday and is_market_hours,
+            "source": "estimated",
+            "note": "Schwab API not configured, using time-based estimate"
+        }
+
+    try:
+        return {
+            "equity_open": is_market_open('equity'),
+            "option_open": is_market_open('option'),
+            "source": "schwab"
+        }
+    except Exception as e:
+        return {
+            "equity_open": False,
+            "option_open": False,
+            "source": "error",
+            "error": str(e)
+        }
+
+
 @app.post("/predict", response_model=PredictionResponse)
 def predict(request: PredictionRequest):
     """Make CSP timing prediction for a single ticker"""
@@ -126,17 +232,46 @@ def predict(request: PredictionRequest):
         prediction = MODEL.predict(X_scaled)[0]
         probabilities = MODEL.predict_proba(X_scaled)[0]
 
-        # Get current data
+        # Get current data - try Schwab first for real-time price
         current_data = collector.data.iloc[-1]
-        current_price = float(current_data['Close'])
+        price_source = "Yahoo"
+
+        if SCHWAB_AVAILABLE:
+            try:
+                schwab_quote = get_stock_price(ticker)
+                current_price = float(schwab_quote['price'])
+                price_source = "Schwab"
+                print(f"[Schwab] Current price for {ticker}: ${current_price:.2f}")
+            except Exception as e:
+                print(f"[Schwab] Price fetch failed: {e}, using Yahoo Finance")
+                current_price = float(current_data['Close'])
+        else:
+            current_price = float(current_data['Close'])
 
         # Get ALL options data in the delta range
+        # Try Schwab API first (real Greeks), fall back to Yahoo Finance + Black-Scholes
         all_options = []
         options_data = None
+        options_source = "Yahoo+BS"
         try:
             print(f"Fetching options for {ticker} with delta range {request.min_delta}-{request.max_delta}...")
-            all_options = get_all_csp_options(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
-            print(f"Found {len(all_options)} options")
+
+            if SCHWAB_AVAILABLE:
+                try:
+                    all_options = get_csp_options_schwab(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
+                    if all_options:
+                        options_source = "Schwab"
+                        print(f"[Schwab] Found {len(all_options)} options")
+                except Exception as schwab_err:
+                    print(f"[Schwab] Failed: {schwab_err}, falling back to Yahoo Finance")
+                    all_options = []
+
+            # Fallback to Yahoo Finance + Black-Scholes if Schwab failed or not available
+            if not all_options:
+                all_options = get_all_csp_options(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
+                options_source = "Yahoo+BS"
+
+            print(f"Found {len(all_options)} options via {options_source}")
 
             # Add edge calculation with SCALED model risk per strike
             model_prob_bad = float(probabilities[0])  # Model's prediction (prob of >5% drop)
@@ -244,7 +379,12 @@ def predict(request: PredictionRequest):
             model_type="Random Forest (Multi-Ticker)" if "multi" in MODEL_PATH else "Random Forest",
             technical_context=technical_context,
             options_data=options_data,
-            all_options=display_options if display_options else None  # All strikes for best expiration
+            all_options=display_options if display_options else None,
+            data_source={
+                "price": price_source,
+                "options": options_source,
+                "greeks": "Schwab API" if options_source == "Schwab" else "Black-Scholes (calculated)"
+            }
         )
 
     except Exception as e:
