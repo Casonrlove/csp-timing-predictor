@@ -1,0 +1,203 @@
+CSP TIMING PREDICTOR - SYSTEM ARCHITECTURE
+==========================================
+
+OVERVIEW
+--------
+This system predicts optimal times to sell Cash Secured Puts (CSPs)
+using machine learning and real-time options data.
+
+
+ARCHITECTURE DIAGRAM
+--------------------
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                        YOUR WORK COMPUTER                           │
+│   Browser → GitHub Pages (casonrlove.github.io/csp-timing-predictor)│
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ HTTPS request to ngrok URL
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                           NGROK TUNNEL                              │
+│   Public URL: https://destinee-unbenignant-shandra.ngrok-free.dev   │
+│   Forwards traffic to → localhost:8000                              │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                     YOUR HOME COMPUTER (WSL)                        │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  simple_api_server.py (FastAPI on port 8000)                │   │
+│  │                                                             │   │
+│  │  /predict endpoint:                                         │   │
+│  │  1. Loads XGBoost model (csp_model_multi.pkl)              │   │
+│  │  2. Fetches stock data (Yahoo Finance)                     │   │
+│  │  3. Makes prediction (good/bad time to sell CSP)           │   │
+│  │  4. Fetches options chain (Yahoo Finance)                  │   │
+│  │  5. Calculates Greeks (Black-Scholes)                      │   │
+│  │  6. Returns JSON response                                   │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  Files on disk:                                                     │
+│  ├── csp_model_multi.pkl       ← Trained XGBoost model             │
+│  ├── simple_api_server.py      ← FastAPI web server                │
+│  ├── options_analyzer_multi.py ← Options data fetching             │
+│  ├── advanced_options_pricing.py ← Black-Scholes Greeks            │
+│  ├── data_collector.py         ← Stock data & technical indicators │
+│  └── train_gpu.py              ← GPU training script               │
+└─────────────────────────────────────────────────────────────────────┘
+
+
+REQUEST FLOW
+------------
+
+1. You type "NVDA" in the web interface (GitHub Pages)
+         ↓
+2. Browser sends POST to ngrok URL → /predict {"ticker": "NVDA"}
+         ↓
+3. Ngrok tunnels request to your home computer (localhost:8000)
+         ↓
+4. FastAPI server receives request
+         ↓
+5. Fetches NVDA data from Yahoo Finance (free, no auth)
+         ↓
+6. XGBoost model predicts: "GOOD TIME TO SELL CSP" (70% confidence)
+         ↓
+7. Fetches NVDA options chain from Yahoo Finance
+         ↓
+8. Calculates Greeks using Black-Scholes
+         ↓
+9. Returns JSON with prediction + options table + edge calculations
+         ↓
+10. Web interface displays the results
+
+
+KEY COMPONENTS
+--------------
+
+Component          What It Does                    Location
+---------          ------------                    --------
+GitHub Pages       Hosts the web UI (index.html)   Cloud (free)
+ngrok              Creates public tunnel to PC     Your PC
+FastAPI            REST API server                 Your PC
+XGBoost Model      Makes predictions               Your PC (GPU trained)
+Yahoo Finance      Stock + options data            Free API
+Black-Scholes      Calculates Greeks               Your PC (CPU)
+
+
+MODEL DETAILS
+-------------
+
+Current Model: XGBoost (GPU-trained)
+- Trained on: NVDA, AMD, TSLA, AAPL, MSFT, GOOGL, META, AMZN
+- Data period: 10 years
+- Features: 28 technical indicators
+- Accuracy: ~70% ROC-AUC
+- Training time: ~7 minutes (50 hyperparameter trials)
+
+Best Hyperparameters:
+- n_estimators: 550
+- max_depth: 8
+- learning_rate: 0.11
+- min_child_weight: 10
+- subsample: 0.80
+- colsample_bytree: 0.68
+
+
+FEATURES USED
+-------------
+
+Technical Indicators:
+- RSI, Stochastic K/D
+- MACD, MACD Signal, MACD Diff
+- Bollinger Band Position & Width
+- Price to SMA (20, 50, 200)
+- Support/Resistance distances
+- Volatility (20D, 252D)
+- IV Rank
+- Volume Ratio
+- Returns (1D, 5D, 20D)
+- Max Drawdown (35D)
+- VIX
+- Days to Earnings
+
+
+TRAINING COMMANDS
+-----------------
+
+# Quick training (default Random Forest)
+python train_multi_ticker.py
+
+# GPU-accelerated XGBoost with hyperparameter tuning
+python train_gpu.py --tune --trials 100 --trees 500
+
+# Full options
+python train_gpu.py --model xgboost --tune --trials 200 --trees 1000 --period 10y
+
+
+STARTING THE SYSTEM
+-------------------
+
+1. Start the API server:
+   python simple_api_server.py --host 0.0.0.0 --port 8000 &
+
+2. Start ngrok tunnel:
+   ngrok http 8000
+
+3. Access the web interface:
+   https://casonrlove.github.io/csp-timing-predictor/
+
+4. Enter the ngrok URL in the web interface and start trading!
+
+
+OPTIONS DATA FLOW
+-----------------
+
+Yahoo Finance API (free) → yfinance library
+         ↓
+Get bid/ask prices for each strike
+         ↓
+Black-Scholes calculation:
+  - Calculate Implied Volatility from market price
+  - Use Binomial Tree for American option pricing
+  - Calculate Delta, Gamma, Theta, Vega
+         ↓
+Edge Calculation:
+  - Market Delta = probability of assignment (from Black-Scholes)
+  - Model Risk = scaled prediction from XGBoost
+  - Edge = Market Delta - Model Risk
+  - Positive Edge = good trade (market overpaying for risk)
+
+
+FILE STRUCTURE
+--------------
+
+/home/cason/model/
+├── simple_api_server.py      # Main API server
+├── data_collector.py         # Stock data fetching
+├── options_analyzer_multi.py # Options chain analysis
+├── advanced_options_pricing.py # Black-Scholes Greeks
+├── train_gpu.py              # GPU training with Optuna
+├── train_multi_ticker.py     # Multi-ticker training
+├── csp_model_multi.pkl       # Trained model file
+├── index.html                # Web interface
+├── start_web_system.sh       # Startup script
+└── ARCHITECTURE.txt          # This file
+
+
+GPU REQUIREMENTS
+----------------
+
+For training:
+- NVIDIA GPU with CUDA support
+- Tested on: RTX 5070 Ti (16GB VRAM)
+- CUDA 13.1+ recommended
+
+For predictions:
+- CPU only (no GPU needed)
+- GPU not used for inference
+
+
+Created: 2026-02-03
+Model: XGBoost with GPU acceleration

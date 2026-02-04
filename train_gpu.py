@@ -296,13 +296,18 @@ class GPUTrainer:
             print("PER-TICKER PERFORMANCE")
             print("="*70)
 
+            # Reset indices to align
+            y_test_reset = y_test.reset_index(drop=True)
+
             for ticker in self.tickers:
                 ticker_mask = df_test['ticker'] == ticker
                 if ticker_mask.sum() < 10:
                     continue
 
-                ticker_y = y_test[ticker_mask]
-                ticker_proba = y_pred_proba[ticker_mask]
+                # Use .values to avoid index alignment issues
+                ticker_indices = ticker_mask[ticker_mask].index.tolist()
+                ticker_y = y_test_reset.iloc[ticker_indices]
+                ticker_proba = y_pred_proba[ticker_indices]
 
                 try:
                     ticker_roc = roc_auc_score(ticker_y, ticker_proba)
