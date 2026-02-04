@@ -32,8 +32,8 @@ app.add_middleware(
 
 class PredictionRequest(BaseModel):
     ticker: str
-    min_delta: Optional[float] = 0.25
-    max_delta: Optional[float] = 0.35
+    min_delta: Optional[float] = 0.10
+    max_delta: Optional[float] = 0.40
 
 
 class PredictionResponse(BaseModel):
@@ -131,24 +131,34 @@ def predict(request: PredictionRequest):
         current_price = float(current_data['Close'])
 
         # Get ALL options data in the delta range
-        print(f"Fetching options for {ticker} with delta range {request.min_delta}-{request.max_delta}...")
-        all_options = get_all_csp_options(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
-        print(f"Found {len(all_options)} options")
+        all_options = []
+        options_data = None
+        try:
+            print(f"Fetching options for {ticker} with delta range {request.min_delta}-{request.max_delta}...")
+            all_options = get_all_csp_options(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
+            print(f"Found {len(all_options)} options")
 
-        # Add edge calculation to ALL options
-        model_prob_bad = float(probabilities[0])
+            # Add edge calculation to ALL options
+            model_prob_bad = float(probabilities[0])
 
-        for option in all_options:
-            market_delta = abs(option['delta'])
-            edge = (market_delta - model_prob_bad) * 100  # As percentage points
+            for option in all_options:
+                market_delta = abs(option['delta'])
+                edge = (market_delta - model_prob_bad) * 100  # As percentage points
 
-            option['market_delta'] = round(market_delta, 3)
-            option['model_prob_assignment'] = round(model_prob_bad, 3)
-            option['edge'] = round(edge, 2)
-            option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
+                option['market_delta'] = round(market_delta, 3)
+                option['model_prob_assignment'] = round(model_prob_bad, 3)
+                option['edge'] = round(edge, 2)
+                option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
 
-        # Get the best one for backward compatibility
-        options_data = all_options[0] if all_options else None
+            # Get the best one for backward compatibility
+            options_data = all_options[0] if all_options else None
+            print(f"Options data prepared: {len(all_options)} total, returning top 5")
+        except Exception as e:
+            print(f"ERROR fetching options data: {e}")
+            import traceback
+            traceback.print_exc()
+            all_options = []
+            options_data = None
 
         # Build technical context
         technical_context = {
@@ -178,6 +188,24 @@ def predict(request: PredictionRequest):
             }
         }
 
+        # Pick ONE expiration (closest to 37 DTE) and show all strikes sorted high→low
+        display_options = []
+        if all_options:
+            # Group options by expiration
+            expirations = {}
+            for opt in all_options:
+                exp = opt['expiration']
+                if exp not in expirations:
+                    expirations[exp] = {'dte': opt['dte'], 'options': []}
+                expirations[exp]['options'].append(opt)
+
+            # Pick the expiration closest to 37 DTE (sweet spot for CSPs)
+            best_exp = min(expirations.keys(), key=lambda x: abs(expirations[x]['dte'] - 37))
+
+            # Get all strikes for that expiration, sorted by strike (high to low = high delta to low)
+            display_options = sorted(expirations[best_exp]['options'],
+                                    key=lambda x: -x['strike'])[:8]
+
         return PredictionResponse(
             ticker=ticker,
             prediction="GOOD TIME TO SELL CSP" if prediction == 1 else "WAIT - NOT OPTIMAL",
@@ -189,11 +217,36 @@ def predict(request: PredictionRequest):
             model_type="Random Forest (Multi-Ticker)" if "multi" in MODEL_PATH else "Random Forest",
             technical_context=technical_context,
             options_data=options_data,
-            all_options=all_options[:5] if all_options else None  # Top 5 options
+            all_options=display_options if display_options else None  # All strikes for best expiration
         )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/test/options/{ticker}")
+def test_options(ticker: str, min_delta: float = 0.25, max_delta: float = 0.35, debug: bool = True):
+    """Debug endpoint to test options fetching"""
+    try:
+        print(f"TEST: Fetching options for {ticker}...")
+        from options_analyzer_multi import get_all_csp_options
+        options = get_all_csp_options(ticker, min_delta=min_delta, max_delta=max_delta, debug=debug)
+        print(f"TEST: Found {len(options)} options")
+        return {
+            "status": "success",
+            "ticker": ticker,
+            "count": len(options),
+            "first_3": options[:3] if options else []
+        }
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"TEST ERROR: {error_detail}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": error_detail
+        }
 
 
 @app.post("/predict/multi")

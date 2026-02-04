@@ -350,7 +350,7 @@
         <div class="card config-section">
             <div class="input-group">
                 <label for="apiUrl">API URL (your ngrok URL)</label>
-                <input type="text" id="apiUrl" placeholder="https://your-ngrok-url.ngrok.io">
+                <input type="text" id="apiUrl" placeholder="https://your-ngrok-url.ngrok.io" value="https://destinee-unbenignant-shandra.ngrok-free.dev">
                 <small style="color: #666; display: block; margin-top: 5px;">
                     Get this from ngrok after starting your local server
                 </small>
@@ -435,7 +435,8 @@
     <script>
         // Save API URL to localStorage
         const apiUrlInput = document.getElementById('apiUrl');
-        apiUrlInput.value = localStorage.getItem('apiUrl') || '';
+        const defaultUrl = 'https://destinee-unbenignant-shandra.ngrok-free.dev';
+        apiUrlInput.value = localStorage.getItem('apiUrl') || defaultUrl;
         apiUrlInput.addEventListener('change', () => {
             localStorage.setItem('apiUrl', apiUrlInput.value);
         });
@@ -689,13 +690,14 @@
 
                         ${data.all_options && data.all_options.length > 1 ? `
                         <div style="margin-top: 20px; background: rgba(255, 255, 255, 0.1); padding: 15px; border-radius: 8px;">
-                            <h4 style="margin: 0 0 12px 0;">📋 All Available Strikes (0.10-0.40 Delta)</h4>
+                            <h4 style="margin: 0 0 12px 0;">📋 All Available Strikes</h4>
                             <div style="overflow-x: auto;">
-                                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                                     <thead>
                                         <tr style="background: rgba(0, 0, 0, 0.3);">
                                             <th style="padding: 8px; text-align: left;">Strike</th>
-                                            <th style="padding: 8px; text-align: right;">Delta</th>
+                                            <th style="padding: 8px; text-align: right;">Market<br/>Delta</th>
+                                            <th style="padding: 8px; text-align: right;">Model<br/>Risk</th>
                                             <th style="padding: 8px; text-align: right;">Premium</th>
                                             <th style="padding: 8px; text-align: right;">ROR</th>
                                             <th style="padding: 8px; text-align: right;">Annual</th>
@@ -707,12 +709,13 @@
                                         ${data.all_options.map(opt => `
                                             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
                                                 <td style="padding: 8px;"><strong>$${opt.strike.toFixed(2)}</strong></td>
-                                                <td style="padding: 8px; text-align: right;">${(Math.abs(opt.delta) * 100).toFixed(1)}%</td>
+                                                <td style="padding: 8px; text-align: right;">${(opt.market_delta * 100).toFixed(1)}%</td>
+                                                <td style="padding: 8px; text-align: right; color: #FFD700;">${(opt.model_prob_assignment * 100).toFixed(1)}%</td>
                                                 <td style="padding: 8px; text-align: right;">$${opt.premium.toFixed(2)}</td>
                                                 <td style="padding: 8px; text-align: right;">${opt.ror.toFixed(2)}%</td>
                                                 <td style="padding: 8px; text-align: right;">${opt.annualized_ror.toFixed(1)}%</td>
                                                 <td style="padding: 8px; text-align: right;">${opt.dte}d</td>
-                                                <td style="padding: 8px; text-align: right; color: ${opt.edge > 0 ? '#4CAF50' : '#f44336'};">
+                                                <td style="padding: 8px; text-align: right; font-weight: bold; color: ${opt.edge > 0 ? '#4CAF50' : '#f44336'};">
                                                     ${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}pp
                                                 </td>
                                             </tr>
@@ -721,7 +724,7 @@
                                 </table>
                             </div>
                             <div style="margin-top: 10px; font-size: 0.75rem; opacity: 0.7;">
-                                <em>💡 Higher delta = more premium, higher assignment risk. Lower delta = less premium, safer.</em>
+                                <em>💡 Edge = Market Delta - Model Risk. Positive edge means market is paying you more than the model says the risk is worth.</em>
                             </div>
                         </div>
                         ` : ''}

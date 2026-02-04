@@ -10,7 +10,7 @@ import pandas as pd
 
 
 def get_all_csp_options(ticker, target_dte_min=30, target_dte_max=45,
-                        min_delta=0.10, max_delta=0.40):
+                        min_delta=0.10, max_delta=0.40, debug=False):
     """
     Get ALL suitable CSP options within delta range
 
@@ -20,6 +20,7 @@ def get_all_csp_options(ticker, target_dte_min=30, target_dte_max=45,
         target_dte_max: Maximum DTE
         min_delta: Minimum delta (e.g., 0.10 for 10 delta)
         max_delta: Maximum delta (e.g., 0.40 for 40 delta)
+        debug: Print debug information
 
     Returns:
         List of options sorted by delta (closest to 0.30 first)
@@ -28,11 +29,17 @@ def get_all_csp_options(ticker, target_dte_min=30, target_dte_max=45,
         stock = yf.Ticker(ticker)
         current_price = stock.history(period='1d')['Close'].iloc[-1]
 
+        if debug:
+            print(f'[DEBUG] Current price: {current_price:.2f}')
+
         expirations = stock.options
         if not expirations:
             return []
 
         all_options = []
+
+        if debug:
+            print(f'[DEBUG] Total expirations: {len(expirations)}')
 
         for exp_date in expirations:
             # Calculate DTE
@@ -43,6 +50,9 @@ def get_all_csp_options(ticker, target_dte_min=30, target_dte_max=45,
             if dte < target_dte_min or dte > target_dte_max:
                 continue
 
+            if debug:
+                print(f'[DEBUG] Checking {exp_date} (DTE={dte})')
+
             try:
                 opt_chain = stock.option_chain(exp_date)
                 puts = opt_chain.puts
@@ -50,6 +60,9 @@ def get_all_csp_options(ticker, target_dte_min=30, target_dte_max=45,
                 # Filter for OTM puts only (strike < stock price)
                 puts = puts[puts['strike'] < current_price]
                 puts = puts[puts['strike'] >= current_price * 0.80]  # Not too far OTM
+
+                if debug:
+                    print(f'[DEBUG]   Found {len(puts)} OTM puts in strike range')
 
                 for _, put in puts.iterrows():
                     strike = put['strike']
@@ -59,12 +72,16 @@ def get_all_csp_options(ticker, target_dte_min=30, target_dte_max=45,
                     oi = int(put['openInterest']) if pd.notna(put['openInterest']) else 0
 
                     if volume == 0 and oi == 0:
+                        if debug:
+                            print(f'[DEBUG]     Strike {strike:.2f}: Skipped (no volume/OI)')
                         continue
 
                     # Get accurate Greeks
                     greeks = get_accurate_greeks(ticker, strike, exp_date, 'put', use_binomial=True)
 
                     if not greeks:
+                        if debug:
+                            print(f'[DEBUG]     Strike {strike:.2f}: Skipped (greeks calculation failed)')
                         continue
 
                     delta = greeks['delta']
@@ -72,7 +89,12 @@ def get_all_csp_options(ticker, target_dte_min=30, target_dte_max=45,
 
                     # Check if delta is in range
                     if delta_magnitude < min_delta or delta_magnitude > max_delta:
+                        if debug:
+                            print(f'[DEBUG]     Strike {strike:.2f}: Skipped (delta {delta_magnitude:.3f} outside range {min_delta}-{max_delta})')
                         continue
+
+                    if debug:
+                        print(f'[DEBUG]     Strike {strike:.2f}: ACCEPTED (delta={delta_magnitude:.3f}, premium={greeks["market_price"]:.2f})')
 
                     premium = greeks['market_price']
 
