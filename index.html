@@ -1024,30 +1024,30 @@
                                 <div id="optionsTable_${data.ticker}_${exp.replace(/-/g, '')}"
                                      style="display: ${idx === 0 ? 'block' : 'none'};">
                                     <div style="overflow-x: auto;">
-                                        <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                                        <table style="border-collapse: collapse; font-size: 0.8rem;">
                                             <thead>
                                                 <tr style="background: #21262d;">
-                                                    <th style="padding: 5px 6px; text-align: left; color: #8b949e;">Strike</th>
-                                                    <th style="padding: 5px 6px; text-align: right; color: #8b949e;">Bid</th>
-                                                    <th style="padding: 5px 6px; text-align: right; color: #8b949e;">Ask</th>
-                                                    <th style="padding: 5px 6px; text-align: right; color: #8b949e;">Delta</th>
-                                                    <th style="padding: 5px 6px; text-align: right; color: #8b949e;">Model</th>
-                                                    <th style="padding: 5px 6px; text-align: right; color: #8b949e;">ROR</th>
-                                                    <th style="padding: 5px 6px; text-align: right; color: #8b949e;">Theta</th>
-                                                    <th style="padding: 5px 6px; text-align: right; color: #8b949e;">Vol</th>
+                                                    <th style="padding: 4px 5px; text-align: left; color: #8b949e;">Strike</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Bid</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Ask</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Delta</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Model</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">ROR</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Theta</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Vol</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 ${expData.options.map(opt => `
                                                     <tr style="border-bottom: 1px solid #30363d; ${opt.edge > 2 ? 'background: rgba(63, 185, 80, 0.1);' : opt.edge < -2 ? 'background: rgba(248, 81, 73, 0.1);' : ''}">
-                                                        <td style="padding: 5px 6px;"><strong>$${opt.strike.toFixed(0)}</strong></td>
-                                                        <td style="padding: 5px 6px; text-align: right;">$${opt.bid.toFixed(2)}</td>
-                                                        <td style="padding: 5px 6px; text-align: right;">$${opt.ask.toFixed(2)}</td>
-                                                        <td style="padding: 5px 6px; text-align: right;">${(Math.abs(opt.delta) * 100).toFixed(0)}%</td>
-                                                        <td style="padding: 5px 6px; text-align: right; color: #58a6ff;">${(opt.model_prob_assignment * 100).toFixed(0)}%</td>
-                                                        <td style="padding: 5px 6px; text-align: right;">${opt.ror.toFixed(1)}%</td>
-                                                        <td style="padding: 5px 6px; text-align: right;">${(opt.theta_efficiency * 100).toFixed(2)}%</td>
-                                                        <td style="padding: 5px 6px; text-align: right; color: #8b949e;">${opt.volume.toLocaleString()}</td>
+                                                        <td style="padding: 4px 5px;"><strong>$${opt.strike.toFixed(0)}</strong></td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.bid.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.ask.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.delta.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right; color: #58a6ff;">${opt.model_prob_assignment.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.ror.toFixed(1)}%</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.theta.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right; color: #8b949e;">${opt.volume.toLocaleString()}</td>
                                                     </tr>
                                                 `).join('')}
                                             </tbody>
