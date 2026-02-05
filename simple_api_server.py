@@ -481,6 +481,22 @@ def predict(request: PredictionRequest):
         # Calculate confidence (decisiveness) - p_safe, p_downside, csp_score already calculated above
         confidence = abs(csp_score)  # Model decisiveness (0=unsure, 1=decisive)
 
+        # Log prediction for forward validation
+        try:
+            validator = get_validator()
+            if validator:
+                validator.log_prediction(
+                    ticker=ticker,
+                    price=current_price,
+                    p_safe=p_safe,
+                    p_downside=p_downside,
+                    csp_score=csp_score,
+                    suggested_strike=options_data['strike'] if options_data else None,
+                    suggested_expiration=options_data['expiration'] if options_data else None
+                )
+        except Exception as log_err:
+            print(f"Failed to log prediction: {log_err}")
+
         return PredictionResponse(
             ticker=ticker,
             prediction="GOOD TIME TO SELL CSP" if prediction == 1 else "WAIT - NOT OPTIMAL",
@@ -561,6 +577,79 @@ def predict_multi(request: MultiTickerRequest):
     return {
         "results": results_with_prob + results_with_errors,
         "count": len(results),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# =========================================================================
+# VALIDATION ENDPOINTS
+# =========================================================================
+
+# Initialize validator (lazy load)
+_validator = None
+
+def get_validator():
+    global _validator
+    if _validator is None:
+        try:
+            from model_validator import ModelValidator
+            _validator = ModelValidator()
+        except ImportError:
+            return None
+    return _validator
+
+
+@app.get("/validation/stats")
+def get_validation_stats():
+    """Get prediction accuracy stats from logged predictions"""
+    validator = get_validator()
+    if validator is None:
+        return {"status": "error", "message": "Validator not available"}
+
+    accuracy = validator.get_prediction_accuracy()
+    recent = validator.get_recent_predictions(10)
+
+    return {
+        "status": "success",
+        "accuracy_stats": accuracy,
+        "recent_predictions": recent,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/validation/record_outcome")
+def record_outcome(ticker: str, prediction_date: str, outcome: int, actual_return: float = None):
+    """
+    Record the actual outcome for a past prediction
+
+    Args:
+        ticker: Stock ticker
+        prediction_date: Date prediction was made (YYYY-MM-DD)
+        outcome: 1 if stock didn't drop >5%, 0 if it did
+        actual_return: Actual return over the period (optional)
+    """
+    validator = get_validator()
+    if validator is None:
+        return {"status": "error", "message": "Validator not available"}
+
+    success = validator.record_outcome(ticker, prediction_date, outcome, actual_return)
+
+    return {
+        "status": "success" if success else "not_found",
+        "message": f"Outcome recorded for {ticker}" if success else f"No prediction found for {ticker} on {prediction_date}"
+    }
+
+
+@app.get("/validation/recent")
+def get_recent_predictions(n: int = 20):
+    """Get recent logged predictions"""
+    validator = get_validator()
+    if validator is None:
+        return {"status": "error", "message": "Validator not available"}
+
+    return {
+        "status": "success",
+        "predictions": validator.get_recent_predictions(n),
         "timestamp": datetime.now().isoformat()
     }
 
