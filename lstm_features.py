@@ -269,7 +269,8 @@ class LSTMFeatureGenerator:
 
     def load(self, path):
         """Load a saved model"""
-        checkpoint = torch.load(path, map_location=self.device)
+        # weights_only=False required because checkpoint includes sklearn StandardScaler
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
 
         self.scaler = checkpoint['scaler']
         self.feature_cols = checkpoint['feature_cols']
