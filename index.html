@@ -21,10 +21,12 @@
             --bg-secondary: #161b22;
             --bg-card: #1c2128;
             --bg-row-alt: #21262d;
+            --bg-row-itm: #262c36;
+            --bg-row-otm: #161b22;
             --border-color: #30363d;
             --text-primary: #e6edf3;
             --text-secondary: #8b949e;
-            --text-strike: #e6edf3;
+            --text-strike: #6e40c9;
             --accent-purple: #6e40c9;
             --accent-blue: #58a6ff;
             --positive-green: #3fb950;
@@ -42,10 +44,12 @@
             --bg-secondary: #131a24;
             --bg-card: #1a2332;
             --bg-row-alt: #1f2937;
+            --bg-row-itm: #242f3d;
+            --bg-row-otm: #151c28;
             --border-color: #2d3748;
             --text-primary: #e2e8f0;
             --text-secondary: #718096;
-            --text-strike: #f687b3;
+            --text-strike: #805ad5;
             --accent-purple: #805ad5;
             --accent-blue: #667eea;
             --positive-green: #48bb78;
@@ -63,10 +67,12 @@
             --bg-secondary: #161b22;
             --bg-card: #1c2128;
             --bg-row-alt: #21262d;
+            --bg-row-itm: #262c36;
+            --bg-row-otm: #161b22;
             --border-color: #30363d;
             --text-primary: #e6edf3;
             --text-secondary: #8b949e;
-            --text-strike: #e6edf3;
+            --text-strike: #6e40c9;
             --accent-purple: #6e40c9;
             --accent-blue: #58a6ff;
             --positive-green: #3fb950;
@@ -1316,14 +1322,17 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                ${expData.options.map((opt, rowIdx) => `
-                                                    <tr style="border-bottom: 1px solid var(--border-color); ${opt.is_suggested ? 'background: rgba(128, 90, 213, 0.25); border-left: 3px solid var(--accent-purple);' : rowIdx % 2 === 1 ? 'background: var(--bg-row-alt);' : ''}">
+                                                ${expData.options.map((opt, rowIdx) => {
+                                                    const isITM = opt.strike > data.current_price;
+                                                    const rowBg = opt.is_suggested ? 'rgba(128, 90, 213, 0.25)' : isITM ? 'var(--bg-row-itm)' : 'var(--bg-row-otm)';
+                                                    return `
+                                                    <tr style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
                                                         <td style="padding: 6px 8px; color: var(--text-strike);"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--text-primary); font-weight: 500;">${opt.bid.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--text-primary); font-weight: 500;">${opt.ask.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right;">${opt.delta.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>`;
                                                         <td style="padding: 6px 8px; text-align: right;">${opt.ror.toFixed(1)}%</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--warning-orange); font-weight: ${opt.is_suggested ? 'bold' : 'normal'};">${opt.sharpe ? opt.sharpe.toFixed(2) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right;">${opt.theta.toFixed(2)}</td>
@@ -1334,7 +1343,7 @@
                                                         <td style="padding: 6px 8px; text-align: right;">${opt.premium.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right;">${(opt.implied_volatility * 100).toFixed(0)}%</td>
                                                     </tr>
-                                                `).join('')}
+                                                `}).join('')}
                                             </tbody>
                                         </table>
                                     </div>
