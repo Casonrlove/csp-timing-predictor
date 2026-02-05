@@ -525,7 +525,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.9.0</div>
+            <div class="version">v1.9.1</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -768,8 +768,8 @@
                         if (response.ok) {
                             const data = await response.json();
 
-                            // If there's a suggested trade (positive edge), add it
-                            if (data.options_data && data.options_data.edge > 0) {
+                            // If there's a suggested trade (requires BOTH CSP Score > 0 AND positive edge)
+                            if (data.options_data && data.csp_score > 0 && data.options_data.edge > 0) {
                                 opportunities.push({
                                     ticker: ticker,
                                     strike: data.options_data.strike,

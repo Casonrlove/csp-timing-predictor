@@ -276,6 +276,11 @@ def predict(request: PredictionRequest):
         prediction = MODEL.predict(X_scaled)[0]
         probabilities = MODEL.predict_proba(X_scaled)[0]
 
+        # Calculate CSP metrics early (needed for trade gating)
+        p_safe = float(probabilities[1])
+        p_downside = float(probabilities[0])
+        csp_score = p_safe - p_downside
+
         # Get current data - try Schwab first for real-time price
         current_data = collector.data.iloc[-1]
         price_source = "Yahoo"
@@ -361,19 +366,24 @@ def predict(request: PredictionRequest):
                 else:
                     option['sharpe'] = 0
 
-            # Select best option by Edge (only if positive edge exists)
+            # Select best option - require BOTH CSP Score > 0 AND positive edge
             if all_options:
-                # Find option with best positive edge
-                positive_edge_options = [opt for opt in all_options if opt.get('edge', 0) > 0]
-                if positive_edge_options:
-                    best_edge_option = max(positive_edge_options, key=lambda x: x.get('edge', 0))
-                    best_edge_option['is_suggested'] = True
-                    options_data = best_edge_option
-                    print(f"Best Edge: ${best_edge_option['strike']} strike, Edge={best_edge_option['edge']:.1f}")
-                else:
-                    # No positive edge - don't suggest any option
+                # Gate 1: CSP Score must be positive (model favors safe outcome)
+                if csp_score <= 0:
                     options_data = None
-                    print("No positive edge options found - no suggestion")
+                    print(f"CSP Score {csp_score:.2f} <= 0 - no suggestion (model favors downside)")
+                else:
+                    # Gate 2: Find option with best positive edge
+                    positive_edge_options = [opt for opt in all_options if opt.get('edge', 0) > 0]
+                    if positive_edge_options:
+                        best_edge_option = max(positive_edge_options, key=lambda x: x.get('edge', 0))
+                        best_edge_option['is_suggested'] = True
+                        options_data = best_edge_option
+                        print(f"Best Edge: ${best_edge_option['strike']} strike, Edge={best_edge_option['edge']:.1f}, CSP Score={csp_score:.2f}")
+                    else:
+                        # No positive edge - don't suggest any option
+                        options_data = None
+                        print(f"CSP Score {csp_score:.2f} > 0 but no positive edge options - no suggestion")
             else:
                 options_data = None
             print(f"Options data prepared: {len(all_options)} total, returning top 5")
@@ -468,11 +478,8 @@ def predict(request: PredictionRequest):
                 print(f"Could not check market status: {e}")
                 market_status = {"message": "Could not determine market status"}
 
-        # Calculate improved metrics
-        p_safe = float(probabilities[1])  # Probability of no major drop
-        p_downside = float(probabilities[0])  # Probability of >5% drop
-        csp_score = p_safe - p_downside  # -1 to +1, higher = better CSP opportunity
-        confidence = abs(p_safe - p_downside)  # Model decisiveness (0=unsure, 1=decisive)
+        # Calculate confidence (decisiveness) - p_safe, p_downside, csp_score already calculated above
+        confidence = abs(csp_score)  # Model decisiveness (0=unsure, 1=decisive)
 
         return PredictionResponse(
             ticker=ticker,
