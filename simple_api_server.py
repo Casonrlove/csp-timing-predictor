@@ -480,11 +480,11 @@ def predict(request: PredictionRequest):
             sorted_exps = sorted(options_by_expiration.keys())
             available_expirations = sorted_exps[:6]  # Next 6 monthly expirations
 
-            # Sort strikes within each expiration (high to low = high delta to low)
+            # Sort strikes within each expiration (low to high = low delta at top, high delta at bottom)
             for exp in options_by_expiration:
                 options_by_expiration[exp]['options'] = sorted(
                     options_by_expiration[exp]['options'],
-                    key=lambda x: -x['strike']
+                    key=lambda x: x['strike']
                 )
 
             # For backward compatibility, use first expiration as default display
