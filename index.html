@@ -525,7 +525,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.7.1</div>
+            <div class="version">v1.8.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -548,6 +548,20 @@
                 <small style="color: #666; display: block; margin-top: 5px;">
                     Get this from ngrok after starting your local server
                 </small>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🏆 Top CSP Opportunities</h2>
+            <p style="color: #8b949e; margin-bottom: 15px;">Scan popular tickers to find the best CSP trades ranked by edge</p>
+            <div class="button-group" style="margin-bottom: 15px;">
+                <button onclick="scanTopOpportunities()">🔍 Scan All Tickers</button>
+                <span id="scanStatus" style="color: #8b949e; margin-left: 10px;"></span>
+            </div>
+            <div id="topOpportunities">
+                <div style="padding: 20px; text-align: center; color: #8b949e;">
+                    Click "Scan All Tickers" to find the best CSP opportunities
+                </div>
             </div>
         </div>
 
@@ -724,6 +738,118 @@
 
         // Check token status on page load
         setTimeout(checkTokenStatus, 1000);
+
+        // Popular tickers to scan for top opportunities
+        const SCAN_TICKERS = ['NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'NFLX', 'SPY', 'QQQ', 'TQQQ'];
+
+        async function scanTopOpportunities() {
+            const resultsDiv = document.getElementById('topOpportunities');
+            const statusSpan = document.getElementById('scanStatus');
+
+            resultsDiv.innerHTML = '<div class="loading"><div class="spinner"></div>Scanning tickers...</div>';
+
+            const opportunities = [];
+            let completed = 0;
+
+            try {
+                const apiUrl = getApiUrl();
+
+                // Scan each ticker
+                for (const ticker of SCAN_TICKERS) {
+                    statusSpan.textContent = `Scanning ${ticker}... (${completed}/${SCAN_TICKERS.length})`;
+
+                    try {
+                        const response = await fetch(`${apiUrl}/predict`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ticker: ticker, min_delta: 0.10, max_delta: 0.60 })
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+
+                            // If there's a suggested trade (positive edge), add it
+                            if (data.options_data && data.options_data.edge > 0) {
+                                opportunities.push({
+                                    ticker: ticker,
+                                    strike: data.options_data.strike,
+                                    expiration: data.options_data.expiration,
+                                    dte: data.options_data.dte,
+                                    delta: data.options_data.delta,
+                                    edge: data.options_data.edge,
+                                    ror: data.options_data.ror,
+                                    premium: data.options_data.premium,
+                                    prob_good: data.prob_good,
+                                    current_price: data.current_price
+                                });
+                            }
+                        }
+                    } catch (e) {
+                        console.log(`Failed to scan ${ticker}:`, e);
+                    }
+
+                    completed++;
+                }
+
+                statusSpan.textContent = `Done! Found ${opportunities.length} opportunities`;
+
+                // Sort by edge (best first)
+                opportunities.sort((a, b) => b.edge - a.edge);
+
+                // Display results
+                if (opportunities.length === 0) {
+                    resultsDiv.innerHTML = `
+                        <div style="padding: 20px; text-align: center; color: #8b949e;">
+                            No positive edge opportunities found. Market may be closed or all options have negative edge.
+                        </div>
+                    `;
+                } else {
+                    resultsDiv.innerHTML = `
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                            <thead>
+                                <tr style="background: #21262d;">
+                                    <th style="padding: 8px; text-align: left; color: #8b949e;">Ticker</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Price</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Strike</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">DTE</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Delta</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Edge</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">ROR</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Premium</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Model</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${opportunities.slice(0, 10).map((opp, idx) => `
+                                    <tr style="border-bottom: 1px solid #30363d; ${idx === 0 ? 'background: rgba(63, 185, 80, 0.15);' : ''}">
+                                        <td style="padding: 8px;">
+                                            <strong style="color: #58a6ff; cursor: pointer;" onclick="setTicker('${opp.ticker}'); predictSingle();">
+                                                ${idx === 0 ? '🥇 ' : idx === 1 ? '🥈 ' : idx === 2 ? '🥉 ' : ''}${opp.ticker}
+                                            </strong>
+                                        </td>
+                                        <td style="padding: 8px; text-align: right;">$${opp.current_price.toFixed(2)}</td>
+                                        <td style="padding: 8px; text-align: right;">$${opp.strike.toFixed(0)}</td>
+                                        <td style="padding: 8px; text-align: right;">${opp.dte}d</td>
+                                        <td style="padding: 8px; text-align: right;">${opp.delta.toFixed(2)}</td>
+                                        <td style="padding: 8px; text-align: right; color: #3fb950; font-weight: bold;">+${opp.edge.toFixed(1)}</td>
+                                        <td style="padding: 8px; text-align: right; color: #3fb950;">${opp.ror.toFixed(1)}%</td>
+                                        <td style="padding: 8px; text-align: right;">$${opp.premium.toFixed(2)}</td>
+                                        <td style="padding: 8px; text-align: right;">${(opp.prob_good * 100).toFixed(0)}%</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                        <div style="margin-top: 10px; font-size: 0.75rem; color: #8b949e;">
+                            <em>Click ticker to view full details. Showing top ${Math.min(10, opportunities.length)} by edge.</em>
+                        </div>
+                    `;
+                }
+
+            } catch (e) {
+                resultsDiv.innerHTML = `<div style="color: #f85149; padding: 20px;">Error: ${e.message}</div>`;
+                statusSpan.textContent = '';
+            }
+        }
 
         function setTicker(ticker) {
             document.getElementById('ticker').value = ticker;
