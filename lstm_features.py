@@ -130,20 +130,36 @@ class LSTMFeatureGenerator:
         if verbose:
             print(f"  Training sequences: {len(X)}")
 
-        # Convert to tensors
+        # Initialize model first to test GPU compatibility
+        self.model = LSTMPredictor(
+            input_size=len(feature_cols),
+            hidden_size=self.hidden_size,
+            num_layers=self.num_layers
+        )
+
+        # Try to move model to GPU, fall back to CPU if it fails
+        try:
+            self.model = self.model.to(self.device)
+            # Test with a small forward pass
+            test_input = torch.zeros(1, self.sequence_length, len(feature_cols)).to(self.device)
+            _ = self.model(test_input)
+            if verbose:
+                print(f"  Using device: {self.device}")
+        except RuntimeError as e:
+            if 'CUDA' in str(e) or 'kernel' in str(e) or 'no kernel image' in str(e):
+                print(f"  GPU not compatible (new GPU?), using CPU instead...")
+                self.device = torch.device('cpu')
+                self.model = self.model.to(self.device)
+            else:
+                raise e
+
+        # Convert to tensors on the correct device
         X_tensor = torch.FloatTensor(X).to(self.device)
         y_tensor = torch.FloatTensor(y).to(self.device)
 
         # Create data loader
         dataset = TensorDataset(X_tensor, y_tensor)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-        # Initialize model
-        self.model = LSTMPredictor(
-            input_size=len(feature_cols),
-            hidden_size=self.hidden_size,
-            num_layers=self.num_layers
-        ).to(self.device)
 
         # Loss and optimizer
         criterion = nn.MSELoss()
