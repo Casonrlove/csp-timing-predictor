@@ -50,15 +50,25 @@ def main():
     collector.calculate_technical_indicators()
     collector.create_target_variable()
 
+    # Generate LSTM features if validator has LSTM model
+    if validator.lstm_generator is not None:
+        print("Generating LSTM features...")
+        try:
+            lstm_features = validator.lstm_generator.generate_features(collector.data)
+            for col in lstm_features.columns:
+                collector.data[col] = lstm_features[col].values
+            print(f"  Added {len(lstm_features.columns)} LSTM features")
+        except Exception as e:
+            print(f"  Failed to generate LSTM features: {e}")
+
     df = collector.data.dropna()
 
-    # Get feature columns
-    exclude_cols = ['Good_CSP_Time', 'Date', 'Ticker', 'Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close']
-    feature_cols = [c for c in df.columns if c not in exclude_cols and df[c].dtype in ['float64', 'int64']]
-
-    # Limit to model's expected features if available
+    # Get feature columns - use model's expected features
     if validator.feature_names:
         feature_cols = [c for c in validator.feature_names if c in df.columns]
+    else:
+        exclude_cols = ['Good_CSP_Time', 'Date', 'Ticker', 'Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close']
+        feature_cols = [c for c in df.columns if c not in exclude_cols and df[c].dtype in ['float64', 'int64']]
 
     print(f"Using {len(feature_cols)} features for validation")
 

@@ -15,12 +15,14 @@ import joblib
 class ModelValidator:
     """Comprehensive model validation and backtesting"""
 
-    def __init__(self, model_path='csp_model_multi.pkl', log_path='predictions_log.json'):
+    def __init__(self, model_path='csp_model_multi.pkl', log_path='predictions_log.json',
+                 lstm_path='csp_model_multi_lstm.pt'):
         self.model_path = model_path
         self.log_path = log_path
         self.model = None
         self.scaler = None
         self.feature_names = None
+        self.lstm_generator = None
 
         # Load model
         if os.path.exists(model_path):
@@ -28,6 +30,18 @@ class ModelValidator:
             self.model = model_data['model']
             self.scaler = model_data['scaler']
             self.feature_names = model_data.get('feature_names') or model_data.get('feature_cols')
+
+        # Load LSTM model if needed
+        LSTM_FEATURES = ['LSTM_Return_5D', 'LSTM_Return_10D', 'LSTM_Direction_Prob']
+        if self.feature_names and any(f in self.feature_names for f in LSTM_FEATURES):
+            if os.path.exists(lstm_path):
+                try:
+                    from lstm_features import LSTMFeatureGenerator
+                    self.lstm_generator = LSTMFeatureGenerator()
+                    self.lstm_generator.load(lstm_path)
+                    print(f"✓ LSTM model loaded for validation")
+                except Exception as e:
+                    print(f"⚠ Failed to load LSTM model: {e}")
 
         # Load or initialize prediction log
         self.predictions_log = self._load_log()
