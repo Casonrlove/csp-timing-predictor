@@ -437,7 +437,7 @@ def predict(request: PredictionRequest):
             prob_bad=float(probabilities[0]),
             current_price=current_price,
             date=datetime.now().strftime('%Y-%m-%d'),
-            model_type="Random Forest (Multi-Ticker)" if "multi" in MODEL_PATH else "Random Forest",
+            model_type=f"{type(MODEL).__name__} (Multi-Ticker)" if "multi" in MODEL_PATH else type(MODEL).__name__,
             technical_context=technical_context,
             options_data=options_data,
             all_options=display_options if display_options else None,

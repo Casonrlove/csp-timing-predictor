@@ -1,10 +1,26 @@
 #!/bin/bash
 
 # CSP Timing Predictor - Startup Script
-# Usage: ./start        - Start API server only
-#        ./start --all  - Start API server + ngrok
+# Usage: ./start         - Start API server only
+#        ./start --all   - Start API server + ngrok
+#        ./start --train - Train the model (then start server)
 
 cd /home/cason/model
+
+# Train model if --train flag provided
+if [ "$1" == "--train" ]; then
+    echo "Training model..."
+    echo "This may take 10-30 minutes depending on GPU availability."
+    echo ""
+    python train_ultimate.py
+    if [ $? -eq 0 ]; then
+        echo "✓ Model training complete!"
+    else
+        echo "✗ Model training failed. Check output above."
+        exit 1
+    fi
+    echo ""
+fi
 
 # Kill any existing processes
 pkill -f "simple_api_server" 2>/dev/null
