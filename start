@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# CSP Timing Predictor - Startup Script
+# Usage: ./start        - Start API server only
+#        ./start --all  - Start API server + ngrok
+
+cd /home/cason/model
+
+# Kill any existing processes
+pkill -f "simple_api_server" 2>/dev/null
+pkill -f "ngrok" 2>/dev/null
+sleep 1
+
+echo "Starting CSP Timing API Server..."
+nohup python simple_api_server.py --port 8000 --reload > server.log 2>&1 &
+sleep 3
+
+# Check if server started
+if curl -s http://localhost:8000/ > /dev/null; then
+    echo "✓ API Server running on http://localhost:8000"
+else
+    echo "✗ API Server failed to start. Check server.log"
+    exit 1
+fi
+
+# Start ngrok if --all flag provided
+if [ "$1" == "--all" ]; then
+    echo "Starting ngrok tunnel..."
+    nohup ngrok http 8000 --domain=destinee-unbenignant-shandra.ngrok-free.dev > ngrok.log 2>&1 &
+    sleep 2
+    echo "✓ ngrok running at https://destinee-unbenignant-shandra.ngrok-free.dev"
+fi
+
+echo ""
+echo "Done! Logs:"
+echo "  - Server: tail -f server.log"
+echo "  - ngrok:  tail -f ngrok.log"
