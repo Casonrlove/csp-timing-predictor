@@ -247,6 +247,64 @@ class UltimateTrainer:
 
         return X_train_scaled, X_test_scaled, y_train, y_test
 
+    def prune_features(self, X_train, y_train, top_k=20, importance_threshold=0.01):
+        """
+        Feature importance pruning - keep only the most important features
+
+        Args:
+            X_train: Training features
+            y_train: Training labels
+            top_k: Maximum number of features to keep
+            importance_threshold: Minimum importance to keep a feature
+
+        Returns:
+            List of indices of features to keep
+        """
+        print(f"\n{'='*70}")
+        print("FEATURE IMPORTANCE PRUNING")
+        print("="*70)
+
+        # Train a quick XGBoost to get feature importances
+        quick_model = xgb.XGBClassifier(
+            n_estimators=100,
+            max_depth=5,
+            learning_rate=0.1,
+            random_state=42,
+            eval_metric='auc'
+        )
+
+        if self.use_gpu:
+            quick_model.set_params(tree_method='hist', device='cuda')
+
+        quick_model.fit(X_train, y_train, verbose=False)
+
+        # Get feature importances
+        importances = quick_model.feature_importances_
+        feature_importance = list(zip(range(len(importances)), self.feature_cols, importances))
+        feature_importance.sort(key=lambda x: x[2], reverse=True)
+
+        print(f"\nTop 15 features by importance:")
+        for idx, name, imp in feature_importance[:15]:
+            print(f"  {imp:.4f} - {name}")
+
+        # Select features above threshold and within top_k
+        selected_indices = []
+        selected_names = []
+
+        for idx, name, imp in feature_importance:
+            if imp >= importance_threshold and len(selected_indices) < top_k:
+                selected_indices.append(idx)
+                selected_names.append(name)
+
+        print(f"\n✓ Keeping {len(selected_indices)} of {len(self.feature_cols)} features")
+        print(f"  Removed: {len(self.feature_cols) - len(selected_indices)} low-importance features")
+
+        # Update feature_cols to only include selected features
+        self.pruned_feature_cols = selected_names
+        self.feature_indices = selected_indices
+
+        return selected_indices
+
     def tune_xgboost(self, X_train, y_train, n_trials=100):
         """Tune XGBoost with extensive search"""
         print(f"\n{'='*70}")
@@ -258,17 +316,18 @@ class UltimateTrainer:
         scale_pos_weight = neg / pos if pos > 0 else 1
 
         def objective(trial):
+            # REDUCED COMPLEXITY: Lower max_depth, higher regularization
             params = {
-                'n_estimators': trial.suggest_int('n_estimators', 200, 1500),
-                'max_depth': trial.suggest_int('max_depth', 4, 15),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-                'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-                'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.5, 1.0),
-                'min_child_weight': trial.suggest_int('min_child_weight', 1, 20),
-                'gamma': trial.suggest_float('gamma', 0, 2),
-                'reg_alpha': trial.suggest_float('reg_alpha', 0, 2),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 500),  # Reduced from 200-1500
+                'max_depth': trial.suggest_int('max_depth', 3, 8),  # Reduced from 4-15
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.15, log=True),  # Reduced max
+                'subsample': trial.suggest_float('subsample', 0.6, 0.9),  # More regularization
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 0.8),  # More regularization
+                'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.5, 0.8),
+                'min_child_weight': trial.suggest_int('min_child_weight', 5, 30),  # Higher min
+                'gamma': trial.suggest_float('gamma', 0.5, 3),  # Higher regularization
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.5, 5),  # Higher L1
+                'reg_lambda': trial.suggest_float('reg_lambda', 1, 5),  # Higher L2
                 'scale_pos_weight': scale_pos_weight,
                 'random_state': 42,
                 'eval_metric': 'auc',
@@ -323,15 +382,16 @@ class UltimateTrainer:
         scale_pos_weight = neg / pos if pos > 0 else 1
 
         def objective(trial):
+            # REDUCED COMPLEXITY: Lower max_depth, higher regularization
             params = {
-                'n_estimators': trial.suggest_int('n_estimators', 200, 1500),
-                'max_depth': trial.suggest_int('max_depth', 4, 15),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-                'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-                'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
-                'reg_alpha': trial.suggest_float('reg_alpha', 0, 2),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0, 2),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 500),  # Reduced
+                'max_depth': trial.suggest_int('max_depth', 3, 8),  # Reduced from 4-15
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.15, log=True),
+                'subsample': trial.suggest_float('subsample', 0.6, 0.9),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 0.8),
+                'min_child_samples': trial.suggest_int('min_child_samples', 20, 100),  # Higher min
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.5, 5),  # Higher L1
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 5),  # Higher L2
                 'scale_pos_weight': scale_pos_weight,
                 'random_state': 42,
                 'verbose': -1,
@@ -530,17 +590,23 @@ class UltimateTrainer:
 
     def save_model(self, filename='csp_model_multi.pkl'):
         """Save model"""
+        # Use pruned features if available
+        feature_names = getattr(self, 'pruned_feature_cols', None) or self.feature_cols
+
         package = {
             'model': self.model,
             'scaler': self.scaler,
-            'feature_cols': self.feature_cols,
+            'feature_cols': feature_names,
+            'feature_names': feature_names,  # Alias for compatibility
             'model_type': type(self.model).__name__,
             'best_params': self.best_params,
             'tickers': self.tickers,
-            'has_lstm': self.lstm_generator is not None
+            'has_lstm': self.lstm_generator is not None,
+            'pruned': hasattr(self, 'pruned_feature_cols')
         }
         joblib.dump(package, filename)
         print(f"\n✓ Model saved to {filename}")
+        print(f"  Features: {len(feature_names)}")
 
         # Save LSTM model separately
         if self.lstm_generator is not None:
@@ -567,6 +633,12 @@ def main():
                         help='LSTM training epochs')
     parser.add_argument('--quick', action='store_true',
                         help='Quick mode: fewer tickers, fewer trials')
+    parser.add_argument('--prune-features', action='store_true', default=True,
+                        help='Enable feature importance pruning (default: True)')
+    parser.add_argument('--no-prune', action='store_true',
+                        help='Disable feature pruning')
+    parser.add_argument('--top-features', type=int, default=20,
+                        help='Max features to keep after pruning (default: 20)')
     parser.add_argument('--output', type=str, default='csp_model_multi.pkl',
                         help='Output filename')
 
@@ -614,6 +686,21 @@ def main():
 
     # Prepare data
     X_train, X_test, y_train, y_test = trainer.prepare_data(df)
+
+    # Feature importance pruning
+    if args.prune_features and not args.no_prune:
+        start = time.time()
+        selected_indices = trainer.prune_features(X_train, y_train, top_k=args.top_features)
+        X_train = X_train[:, selected_indices]
+        X_test = X_test[:, selected_indices]
+        # Update feature_cols to pruned list
+        trainer.feature_cols = trainer.pruned_feature_cols
+        # Refit scaler on pruned features
+        trainer.scaler = StandardScaler()
+        X_train = trainer.scaler.fit_transform(X_train)
+        X_test = trainer.scaler.transform(X_test)
+        timings['Feature Pruning'] = time.time() - start
+        print(f"⏱️  Feature pruning: {format_time(timings['Feature Pruning'])}")
 
     # Tune all models
     print("\n" + "="*70)

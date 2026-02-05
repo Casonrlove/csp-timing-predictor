@@ -322,7 +322,7 @@ class CSPDataCollector:
 
         return days_to_earnings
 
-    def create_target_variable(self, forward_days=35, threshold_pct=-5):
+    def create_target_variable(self, forward_days=35, threshold_pct=-5, volatility_adjusted=True):
         """
         Create target variable: Was it a good time to sell a CSP?
         Good time = stock doesn't drop significantly in next 30-45 days
@@ -330,6 +330,7 @@ class CSPDataCollector:
         Args:
             forward_days: Days to look forward (default 35, middle of 30-45 range)
             threshold_pct: Max acceptable drawdown % (default -5%, relaxed from -3%)
+            volatility_adjusted: If True, scale threshold by stock's volatility (default True)
         """
         df = self.data.copy()
 
@@ -349,10 +350,18 @@ class CSPDataCollector:
 
         df['Max_Drawdown_35D'] = max_drawdown_list
 
-        # Target: Good time to sell CSP
-        # 1 if max drawdown > threshold (e.g., didn't drop more than 3%)
-        # 0 if max drawdown <= threshold (bad time, would have been assigned or stressed)
-        df['Good_CSP_Time'] = (df['Max_Drawdown_35D'] > threshold_pct).astype(int)
+        # Volatility-adjusted threshold
+        if volatility_adjusted and 'Volatility_20D' in df.columns:
+            # Scale threshold by volatility relative to typical market vol (~20% annual = ~1.25% daily)
+            # High vol stocks get wider threshold, low vol stocks get tighter threshold
+            typical_vol = 0.20  # 20% annual volatility baseline
+            vol_ratio = df['Volatility_20D'] / typical_vol
+            vol_ratio = vol_ratio.clip(0.5, 2.0)  # Limit scaling to 0.5x - 2x
+            df['Adjusted_Threshold'] = threshold_pct * vol_ratio
+            df['Good_CSP_Time'] = (df['Max_Drawdown_35D'] > df['Adjusted_Threshold']).astype(int)
+        else:
+            # Fixed threshold
+            df['Good_CSP_Time'] = (df['Max_Drawdown_35D'] > threshold_pct).astype(int)
 
         # Also create a regression target for premium potential
         # Assume we could sell at 0.30 delta, approximate premium based on ATR
