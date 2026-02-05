@@ -84,6 +84,7 @@ MODEL_PATH = None
 MODEL = None
 SCALER = None
 FEATURE_NAMES = None
+LSTM_GENERATOR = None
 
 for path in ['csp_model_multi.pkl', 'csp_model.pkl']:
     if os.path.exists(path):
@@ -98,6 +99,22 @@ for path in ['csp_model_multi.pkl', 'csp_model.pkl']:
 
 if MODEL is None:
     print("ERROR: No trained model found!")
+
+# Load LSTM model if it exists and features require it
+LSTM_FEATURES = ['LSTM_Return_5D', 'LSTM_Return_10D', 'LSTM_Direction_Prob']
+if FEATURE_NAMES and any(f in FEATURE_NAMES for f in LSTM_FEATURES):
+    lstm_path = 'csp_model_multi_lstm.pt'
+    if os.path.exists(lstm_path):
+        try:
+            from lstm_features import LSTMFeatureGenerator
+            LSTM_GENERATOR = LSTMFeatureGenerator()
+            LSTM_GENERATOR.load(lstm_path)
+            print(f"✓ LSTM model loaded from {lstm_path}")
+        except Exception as e:
+            print(f"⚠ Failed to load LSTM model: {e}")
+            LSTM_GENERATOR = None
+    else:
+        print(f"⚠ LSTM features required but {lstm_path} not found")
 
 
 @app.get("/")
@@ -262,6 +279,20 @@ def predict(request: PredictionRequest):
         collector.fetch_data()
         collector.calculate_technical_indicators()
         collector.create_target_variable(forward_days=35, threshold_pct=-5)
+
+        # Generate LSTM features if model requires them
+        if LSTM_GENERATOR is not None:
+            try:
+                lstm_features = LSTM_GENERATOR.generate_features(collector.data)
+                for col in lstm_features.columns:
+                    collector.data[col] = lstm_features[col].values
+                print(f"[LSTM] Generated features for {ticker}")
+            except Exception as lstm_err:
+                print(f"[LSTM] Feature generation failed: {lstm_err}")
+                # Fill with zeros if LSTM fails
+                for col in LSTM_FEATURES:
+                    if col not in collector.data.columns:
+                        collector.data[col] = 0.0
 
         features_df = collector.data[FEATURE_NAMES].copy()
 
