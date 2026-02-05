@@ -50,7 +50,7 @@ app.add_middleware(
 class PredictionRequest(BaseModel):
     ticker: str
     min_delta: Optional[float] = 0.10
-    max_delta: Optional[float] = 0.40
+    max_delta: Optional[float] = 0.60
 
 
 class PredictionResponse(BaseModel):
