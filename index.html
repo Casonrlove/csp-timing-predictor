@@ -1024,7 +1024,7 @@
                                 <div id="optionsTable_${data.ticker}_${exp.replace(/-/g, '')}"
                                      style="display: ${idx === 0 ? 'block' : 'none'};">
                                     <div style="overflow-x: auto;">
-                                        <table style="border-collapse: collapse; font-size: 0.8rem;">
+                                        <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                                             <thead>
                                                 <tr style="background: #21262d;">
                                                     <th style="padding: 4px 5px; text-align: left; color: #8b949e;">Strike</th>
@@ -1035,6 +1035,11 @@
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">ROR</th>
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Theta</th>
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Vol</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Gamma</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Vega</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Last</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Mid</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">IV</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -1048,6 +1053,11 @@
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.ror.toFixed(1)}%</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.theta.toFixed(2)}</td>
                                                         <td style="padding: 4px 5px; text-align: right; color: #8b949e;">${opt.volume.toLocaleString()}</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.gamma.toFixed(3)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.vega.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.last.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${opt.premium.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right;">${(opt.implied_volatility * 100).toFixed(0)}%</td>
                                                     </tr>
                                                 `).join('')}
                                             </tbody>
