@@ -153,13 +153,13 @@ class LSTMFeatureGenerator:
             else:
                 raise e
 
-        # Convert to tensors on the correct device
-        X_tensor = torch.FloatTensor(X).to(self.device)
-        y_tensor = torch.FloatTensor(y).to(self.device)
+        # Keep data on CPU, move batches to GPU during training (saves VRAM)
+        X_tensor = torch.FloatTensor(X)
+        y_tensor = torch.FloatTensor(y)
 
-        # Create data loader
+        # Create data loader (data stays on CPU, batches moved to GPU in training loop)
         dataset = TensorDataset(X_tensor, y_tensor)
-        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
 
         # Loss and optimizer
         criterion = nn.MSELoss()
@@ -174,6 +174,10 @@ class LSTMFeatureGenerator:
         for epoch in range(epochs):
             total_loss = 0
             for batch_X, batch_y in loader:
+                # Move batch to GPU only when needed (saves VRAM)
+                batch_X = batch_X.to(self.device)
+                batch_y = batch_y.to(self.device)
+
                 optimizer.zero_grad()
                 outputs = self.model(batch_X)
                 loss = criterion(outputs, batch_y)
@@ -181,6 +185,9 @@ class LSTMFeatureGenerator:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 optimizer.step()
                 total_loss += loss.item()
+
+                # Free GPU memory
+                del batch_X, batch_y
 
             avg_loss = total_loss / len(loader)
             scheduler.step(avg_loss)

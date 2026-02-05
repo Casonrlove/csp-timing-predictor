@@ -191,7 +191,7 @@ class UltimateTrainer:
             train_data,
             available_features,
             epochs=epochs,
-            batch_size=128,
+            batch_size=256,  # Larger batches OK now that data stays on CPU
             verbose=True
         )
 
