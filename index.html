@@ -1203,8 +1203,8 @@
                                     <span><strong style="color: #3fb950;">${data.options_data.annualized_ror.toFixed(1)}%</strong></span>
                                 </div>
                                 <div class="technical-item" style="background: rgba(210, 153, 34, 0.2); border-color: #d29922;">
-                                    <span><strong>Sharpe:</strong></span>
-                                    <span><strong style="color: #d29922;">${data.options_data.sharpe ? data.options_data.sharpe.toFixed(2) : '-'}</strong></span>
+                                    <span><strong>Theta Eff:</strong></span>
+                                    <span><strong style="color: #d29922;">${data.options_data.theta_efficiency ? data.options_data.theta_efficiency.toFixed(3) + '%' : '-'}</strong></span>
                                 </div>
                                 <div class="technical-item">
                                     <span>Theta/Day:</span>
@@ -1311,7 +1311,7 @@
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Model</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Edge</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">ROR</th>
-                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Sharpe</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">θ Eff</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Theta</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Vol</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Gamma</th>
@@ -1334,7 +1334,7 @@
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ror.toFixed(1)}%</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.sharpe ? opt.sharpe.toFixed(2) : '-'}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta_efficiency ? opt.theta_efficiency.toFixed(3) : '-'}%</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.volume.toLocaleString()}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.gamma.toFixed(3)}</td>
