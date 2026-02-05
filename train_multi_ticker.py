@@ -27,7 +27,7 @@ class MultiTickerTrainer:
         """
         if tickers is None:
             # Default tech-heavy watchlist
-            self.tickers = ['NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'TQQQ', 'SQQQ', 'PLTR', 'VOO']
+            self.tickers = ['NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'TQQQ', 'SQQQ', 'PLTR', 'VOO', 'VTI', 'TXN', 'SCHD', 'COIN', 'JPM', 'V', 'NFLX', 'SPY', 'QQQ']
         else:
             self.tickers = tickers
 

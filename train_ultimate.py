@@ -42,13 +42,13 @@ class UltimateTrainer:
         # Tech giants
         'NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN',
         # More tech
-        'INTC', 'QCOM', 'AVGO', 'CRM', 'ADBE', 'NFLX', 'PYPL',
+        'INTC', 'QCOM', 'AVGO', 'CRM', 'ADBE', 'NFLX', 'PYPL', 'TXN',
         # Financials
         'JPM', 'BAC', 'GS', 'V', 'MA',
         # Other sectors
-        'XOM', 'CVX', 'JNJ', 'PFE', 'UNH',
+        'XOM', 'CVX', 'JNJ', 'PFE', 'UNH', 'PLTR', 'COIN',
         # ETFs
-        'SPY', 'QQQ', 'IWM'
+        'SPY', 'QQQ', 'IWM', 'VOO', 'VTI', 'TQQQ', 'SQQQ', 'SCHD'
     ]
 
     def __init__(self, tickers=None, use_gpu=True):
