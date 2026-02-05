@@ -478,7 +478,7 @@ def predict(request: PredictionRequest):
 
             # Sort expirations by date and take next 3
             sorted_exps = sorted(options_by_expiration.keys())
-            available_expirations = sorted_exps[:3]  # Next 3 monthly expirations
+            available_expirations = sorted_exps[:6]  # Next 6 monthly expirations
 
             # Sort strikes within each expiration (high to low = high delta to low)
             for exp in options_by_expiration:
@@ -492,7 +492,7 @@ def predict(request: PredictionRequest):
                 first_exp = available_expirations[0]
                 display_options = options_by_expiration[first_exp]['options']
 
-            # Only include the 2 monthly expirations in the response
+            # Only include the available monthly expirations in the response
             options_by_expiration = {
                 exp: options_by_expiration[exp]
                 for exp in available_expirations
