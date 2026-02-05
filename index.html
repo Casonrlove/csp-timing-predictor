@@ -1077,8 +1077,8 @@
                         </div>
                         <div style="position: relative; height: 300px;">
                             <canvas id="priceChart_${data.ticker}"></canvas>
-                        </div>
-                        <div id="chartTooltip_${data.ticker}" style="position: absolute; top: 10px; right: 15px; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 10;">
+                            <div id="chartTooltip_${data.ticker}" style="position: absolute; top: 10px; right: 10px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 10; min-width: 120px;">
+                            </div>
                         </div>
                         <div style="margin-top: 10px; display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.75rem; color: #8b949e;">
                             <span>━ Price</span>
@@ -1328,20 +1328,20 @@
                                                     return `
                                                     <tr style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
                                                         <td style="padding: 6px 8px; color: var(--text-strike);"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: var(--text-primary); font-weight: 500;">${opt.bid.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: var(--text-primary); font-weight: 500;">${opt.ask.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right;">${opt.delta.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.bid.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ask.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.delta.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>`;
-                                                        <td style="padding: 6px 8px; text-align: right;">${opt.ror.toFixed(1)}%</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: var(--warning-orange); font-weight: ${opt.is_suggested ? 'bold' : 'normal'};">${opt.sharpe ? opt.sharpe.toFixed(2) : '-'}</td>
-                                                        <td style="padding: 6px 8px; text-align: right;">${opt.theta.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">${opt.volume.toLocaleString()}</td>
-                                                        <td style="padding: 6px 8px; text-align: right;">${opt.gamma.toFixed(3)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right;">${opt.vega.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right;">${opt.last.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right;">${opt.premium.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right;">${(opt.implied_volatility * 100).toFixed(0)}%</td>
+                                                        <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ror.toFixed(1)}%</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.sharpe ? opt.sharpe.toFixed(2) : '-'}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.volume.toLocaleString()}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.gamma.toFixed(3)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.vega.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.last.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.premium.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${(opt.implied_volatility * 100).toFixed(0)}%</td>
                                                     </tr>
                                                 `}).join('')}
                                             </tbody>
