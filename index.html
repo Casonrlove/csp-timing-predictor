@@ -6,20 +6,76 @@
     <title>CSP Timing Predictor</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script>
+        // ============================================
+        // THEME SELECTOR - Change this value to switch themes
+        // 1 = GitHub Dark (current)
+        // 2 = Power E*Trade (navy/purple)
+        // ============================================
+        const THEME = 2;
+    </script>
     <style>
-        /* Power E*Trade inspired dark theme */
-        :root {
+        /* Theme 1: GitHub Dark */
+        :root[data-theme="1"] {
             --bg-primary: #0d1117;
             --bg-secondary: #161b22;
             --bg-card: #1c2128;
+            --bg-row-alt: #21262d;
             --border-color: #30363d;
             --text-primary: #e6edf3;
             --text-secondary: #8b949e;
+            --text-strike: #e6edf3;
             --accent-purple: #6e40c9;
             --accent-blue: #58a6ff;
             --positive-green: #3fb950;
             --negative-red: #f85149;
             --warning-orange: #d29922;
+            --tab-bg: #21262d;
+            --tab-selected-bg: rgba(88, 166, 255, 0.2);
+            --tab-selected-border: #58a6ff;
+            --tab-selected-text: #58a6ff;
+        }
+
+        /* Theme 2: Power E*Trade (Navy/Purple) */
+        :root[data-theme="2"] {
+            --bg-primary: #0c1019;
+            --bg-secondary: #131a24;
+            --bg-card: #1a2332;
+            --bg-row-alt: #1f2937;
+            --border-color: #2d3748;
+            --text-primary: #e2e8f0;
+            --text-secondary: #718096;
+            --text-strike: #f687b3;
+            --accent-purple: #805ad5;
+            --accent-blue: #667eea;
+            --positive-green: #48bb78;
+            --negative-red: #fc8181;
+            --warning-orange: #ed8936;
+            --tab-bg: #1a2332;
+            --tab-selected-bg: #805ad5;
+            --tab-selected-border: #805ad5;
+            --tab-selected-text: #ffffff;
+        }
+
+        /* Default to theme 1 if not set */
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-card: #1c2128;
+            --bg-row-alt: #21262d;
+            --border-color: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-strike: #e6edf3;
+            --accent-purple: #6e40c9;
+            --accent-blue: #58a6ff;
+            --positive-green: #3fb950;
+            --negative-red: #f85149;
+            --warning-orange: #d29922;
+            --tab-bg: #21262d;
+            --tab-selected-bg: rgba(88, 166, 255, 0.2);
+            --tab-selected-border: #58a6ff;
+            --tab-selected-text: #58a6ff;
         }
 
         * {
@@ -527,9 +583,9 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v2.0.1</div>
-            <h1>💰 CSP Timing Predictor</h1>
-            <p>AI-powered predictions for optimal Cash Secured Put timing</p>
+            <div class="version">v2.1.0</div>
+            <h1>CSP Timing Predictor</h1>
+            <p>LSTM + XGBoost + LightGBM + RandomForest ensemble for optimal CSP timing</p>
         </div>
 
         <div id="tokenWarning" style="display: none; background: linear-gradient(135deg, #5c2929 0%, #4a1d1d 100%); border: 2px solid #f85149; border-radius: 8px; padding: 15px; margin-bottom: 20px; color: white;">
@@ -800,9 +856,10 @@
                 opportunities.sort((a, b) => b.edge - a.edge);
 
                 // Display results
+                const styles = getComputedStyle(document.documentElement);
                 if (opportunities.length === 0) {
                     resultsDiv.innerHTML = `
-                        <div style="padding: 20px; text-align: center; color: #8b949e;">
+                        <div style="padding: 20px; text-align: center; color: var(--text-secondary);">
                             No positive edge opportunities found. Market may be closed or all options have negative edge.
                         </div>
                     `;
@@ -810,39 +867,39 @@
                     resultsDiv.innerHTML = `
                         <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
                             <thead>
-                                <tr style="background: #21262d;">
-                                    <th style="padding: 8px; text-align: left; color: #8b949e;">Ticker</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Price</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Strike</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">DTE</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Delta</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Edge</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">ROR</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">CSP Score</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">P(Safe)</th>
+                                <tr style="background: var(--bg-row-alt);">
+                                    <th style="padding: 8px; text-align: left; color: var(--text-secondary);">Ticker</th>
+                                    <th style="padding: 8px; text-align: right; color: var(--text-secondary);">Price</th>
+                                    <th style="padding: 8px; text-align: right; color: var(--text-secondary);">Strike</th>
+                                    <th style="padding: 8px; text-align: right; color: var(--text-secondary);">DTE</th>
+                                    <th style="padding: 8px; text-align: right; color: var(--text-secondary);">Delta</th>
+                                    <th style="padding: 8px; text-align: right; color: var(--text-secondary);">Edge</th>
+                                    <th style="padding: 8px; text-align: right; color: var(--text-secondary);">ROR</th>
+                                    <th style="padding: 8px; text-align: right; color: var(--text-secondary);">CSP Score</th>
+                                    <th style="padding: 8px; text-align: right; color: var(--text-secondary);">P(Safe)</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${opportunities.slice(0, 10).map((opp, idx) => `
-                                    <tr style="border-bottom: 1px solid #30363d; ${idx === 0 ? 'background: rgba(63, 185, 80, 0.15);' : ''}">
+                                    <tr style="border-bottom: 1px solid var(--border-color); ${idx === 0 ? 'background: rgba(72, 187, 120, 0.15);' : idx % 2 === 1 ? 'background: var(--bg-row-alt);' : ''}">
                                         <td style="padding: 8px;">
-                                            <strong style="color: #58a6ff; cursor: pointer;" onclick="setTicker('${opp.ticker}'); predictSingle();">
+                                            <strong style="color: var(--accent-blue); cursor: pointer;" onclick="setTicker('${opp.ticker}'); predictSingle();">
                                                 ${idx === 0 ? '🥇 ' : idx === 1 ? '🥈 ' : idx === 2 ? '🥉 ' : ''}${opp.ticker}
                                             </strong>
                                         </td>
                                         <td style="padding: 8px; text-align: right;">$${opp.current_price.toFixed(2)}</td>
-                                        <td style="padding: 8px; text-align: right;">$${opp.strike.toFixed(2)}</td>
+                                        <td style="padding: 8px; text-align: right; color: var(--text-strike);">$${opp.strike.toFixed(2)}</td>
                                         <td style="padding: 8px; text-align: right;">${opp.dte}d</td>
                                         <td style="padding: 8px; text-align: right;">${opp.delta.toFixed(2)}</td>
-                                        <td style="padding: 8px; text-align: right; color: #3fb950; font-weight: bold;">+${opp.edge.toFixed(1)}</td>
-                                        <td style="padding: 8px; text-align: right; color: #3fb950;">${opp.ror.toFixed(1)}%</td>
-                                        <td style="padding: 8px; text-align: right; font-weight: bold; color: ${opp.csp_score > 0.3 ? '#3fb950' : '#d29922'};">${opp.csp_score > 0 ? '+' : ''}${(opp.csp_score * 100).toFixed(0)}</td>
+                                        <td style="padding: 8px; text-align: right; color: var(--positive-green); font-weight: bold;">+${opp.edge.toFixed(1)}</td>
+                                        <td style="padding: 8px; text-align: right; color: var(--positive-green);">${opp.ror.toFixed(1)}%</td>
+                                        <td style="padding: 8px; text-align: right; font-weight: bold; color: var(${opp.csp_score > 0.3 ? '--positive-green' : '--warning-orange'});">${opp.csp_score > 0 ? '+' : ''}${(opp.csp_score * 100).toFixed(0)}</td>
                                         <td style="padding: 8px; text-align: right;">${(opp.p_safe * 100).toFixed(0)}%</td>
                                     </tr>
                                 `).join('')}
                             </tbody>
                         </table>
-                        <div style="margin-top: 10px; font-size: 0.75rem; color: #8b949e;">
+                        <div style="margin-top: 10px; font-size: 0.75rem; color: var(--text-secondary);">
                             <em>Click ticker to view full details. Sorted by edge. CSP Score = P(Safe) - P(Downside)</em>
                         </div>
                     `;
@@ -865,22 +922,21 @@
             if (!currentPredictionData || !currentPredictionData.available_expirations) return;
 
             const expirations = currentPredictionData.available_expirations;
+            const styles = getComputedStyle(document.documentElement);
 
-            // Update button styles
+            // Update button styles (E*Trade style: purple underline for selected)
             expirations.forEach(exp => {
                 const btn = document.getElementById(`expBtn_${ticker}_${exp.replace(/-/g, '')}`);
                 const table = document.getElementById(`optionsTable_${ticker}_${exp.replace(/-/g, '')}`);
 
                 if (btn && table) {
                     if (exp === selectedExp) {
-                        btn.style.border = '2px solid #58a6ff';
-                        btn.style.background = 'rgba(88, 166, 255, 0.2)';
-                        btn.style.color = '#58a6ff';
+                        btn.style.borderBottom = '3px solid ' + styles.getPropertyValue('--accent-purple').trim();
+                        btn.style.color = styles.getPropertyValue('--text-primary').trim();
                         table.style.display = 'block';
                     } else {
-                        btn.style.border = '2px solid #30363d';
-                        btn.style.background = '#21262d';
-                        btn.style.color = '#8b949e';
+                        btn.style.borderBottom = '3px solid transparent';
+                        btn.style.color = styles.getPropertyValue('--text-secondary').trim();
                         table.style.display = 'none';
                     }
                 }
@@ -1007,10 +1063,10 @@
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 10px;">
                             <h4 style="margin: 0; color: #58a6ff;">📈 Price Chart & 35-Day Projection</h4>
                             <div id="chartRangeButtons_${data.ticker}" style="display: flex; gap: 5px;">
-                                <button onclick="setChartRange('${data.ticker}', 5)" class="range-btn" data-range="5" style="padding: 4px 10px; font-size: 0.75rem; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; cursor: pointer;">1W</button>
-                                <button onclick="setChartRange('${data.ticker}', 22)" class="range-btn" data-range="22" style="padding: 4px 10px; font-size: 0.75rem; background: rgba(88, 166, 255, 0.2); border: 1px solid #58a6ff; color: #58a6ff; border-radius: 4px; cursor: pointer;">1M</button>
-                                <button onclick="setChartRange('${data.ticker}', 66)" class="range-btn" data-range="66" style="padding: 4px 10px; font-size: 0.75rem; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; cursor: pointer;">3M</button>
-                                <button onclick="setChartRange('${data.ticker}', 132)" class="range-btn" data-range="132" style="padding: 4px 10px; font-size: 0.75rem; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; cursor: pointer;">6M</button>
+                                <button onclick="setChartRange('${data.ticker}', 5)" class="range-btn" data-range="5" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">1W</button>
+                                <button onclick="setChartRange('${data.ticker}', 22)" class="range-btn" data-range="22" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-selected-bg); border: 1px solid var(--tab-selected-border); color: var(--tab-selected-text); border-radius: 4px; cursor: pointer;">1M</button>
+                                <button onclick="setChartRange('${data.ticker}', 66)" class="range-btn" data-range="66" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">3M</button>
+                                <button onclick="setChartRange('${data.ticker}', 132)" class="range-btn" data-range="132" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">6M</button>
                             </div>
                         </div>
                         <div style="position: relative; height: 300px;">
@@ -1205,25 +1261,28 @@
                         ` : ''}
 
                         ${data.options_by_expiration && data.available_expirations && data.available_expirations.length > 0 ? `
-                        <div style="margin-top: 20px; background: rgba(22, 27, 34, 0.8); padding: 15px; border-radius: 8px; border: 1px solid #30363d;">
-                            <h4 style="margin: 0 0 12px 0; color: #58a6ff;">📋 Monthly Options (0.10 - 0.60 Delta)</h4>
+                        <div style="margin-top: 20px; background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <h4 style="margin: 0 0 12px 0; color: var(--accent-blue);">📋 Monthly Options (0.10 - 0.60 Delta)</h4>
 
                             <!-- Expiration Toggle Buttons -->
-                            <div style="display: flex; gap: 10px; margin-bottom: 15px;" id="expirationToggle_${data.ticker}">
+                            <div style="display: flex; gap: 8px; margin-bottom: 15px; overflow-x: auto; padding-bottom: 5px;" id="expirationToggle_${data.ticker}">
                                 ${data.available_expirations.map((exp, idx) => {
                                     const expData = data.options_by_expiration[exp];
                                     const expDate = new Date(exp + 'T00:00:00');
                                     const monthName = expDate.toLocaleString('default', { month: 'short' });
                                     const day = expDate.getDate();
+                                    const year = expDate.getFullYear().toString().slice(-2);
                                     return `
                                         <button onclick="switchExpiration('${data.ticker}', '${exp}')"
                                                 id="expBtn_${data.ticker}_${exp.replace(/-/g, '')}"
-                                                style="flex: 1; padding: 10px 15px; border: 2px solid ${idx === 0 ? '#58a6ff' : '#30363d'};
-                                                       background: ${idx === 0 ? 'rgba(88, 166, 255, 0.2)' : '#21262d'};
-                                                       color: ${idx === 0 ? '#58a6ff' : '#8b949e'}; border-radius: 8px;
-                                                       cursor: pointer; font-weight: 600; transition: all 0.2s;">
-                                            <div style="font-size: 1rem;">${monthName} ${day}</div>
-                                            <div style="font-size: 0.8rem; opacity: 0.8;">${expData.dte} DTE</div>
+                                                class="exp-btn ${idx === 0 ? 'selected' : ''}"
+                                                style="padding: 8px 16px; border: 1px solid var(--border-color);
+                                                       background: var(--tab-bg); border-radius: 20px;
+                                                       color: var(${idx === 0 ? '--text-primary' : '--text-secondary'});
+                                                       cursor: pointer; font-weight: 500; transition: all 0.2s;
+                                                       border-bottom: ${idx === 0 ? '3px solid var(--accent-purple)' : '3px solid transparent'};">
+                                            <div style="font-size: 0.85rem; white-space: nowrap;">${monthName}-${day}-${year}</div>
+                                            <div style="font-size: 0.75rem; opacity: 0.7;">${expData.dte} Days</div>
                                         </button>
                                     `;
                                 }).join('')}
@@ -1238,42 +1297,42 @@
                                     <div style="overflow-x: auto;">
                                         <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                                             <thead>
-                                                <tr style="background: #21262d;">
-                                                    <th style="padding: 4px 5px; text-align: left; color: #8b949e;">Strike</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Bid</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Ask</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Delta</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Model</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Edge</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">ROR</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Sharpe</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Theta</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Vol</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Gamma</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Vega</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Last</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Mid</th>
-                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">IV</th>
+                                                <tr style="background: var(--bg-row-alt);">
+                                                    <th style="padding: 6px 8px; text-align: left; color: var(--text-secondary);">Strike</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Bid</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Ask</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Delta</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Model</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Edge</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">ROR</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Sharpe</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Theta</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Vol</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Gamma</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Vega</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Last</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Mid</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">IV</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                ${expData.options.map(opt => `
-                                                    <tr style="border-bottom: 1px solid #30363d; ${opt.is_suggested ? 'background: rgba(110, 64, 201, 0.25); border-left: 3px solid #6e40c9;' : opt.edge > 2 ? 'background: rgba(63, 185, 80, 0.1);' : opt.edge < -2 ? 'background: rgba(248, 81, 73, 0.1);' : ''}">
-                                                        <td style="padding: 4px 5px;"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.bid.toFixed(2)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.ask.toFixed(2)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.delta.toFixed(2)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right; color: #58a6ff;">${opt.model_prob_assignment.toFixed(2)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right; font-weight: bold; color: ${opt.edge > 0 ? '#3fb950' : '#f85149'};">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.ror.toFixed(1)}%</td>
-                                                        <td style="padding: 4px 5px; text-align: right; color: #d29922; font-weight: ${opt.is_suggested ? 'bold' : 'normal'};">${opt.sharpe ? opt.sharpe.toFixed(2) : '-'}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.theta.toFixed(2)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right; color: #8b949e;">${opt.volume.toLocaleString()}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.gamma.toFixed(3)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.vega.toFixed(2)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.last.toFixed(2)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${opt.premium.toFixed(2)}</td>
-                                                        <td style="padding: 4px 5px; text-align: right;">${(opt.implied_volatility * 100).toFixed(0)}%</td>
+                                                ${expData.options.map((opt, rowIdx) => `
+                                                    <tr style="border-bottom: 1px solid var(--border-color); ${opt.is_suggested ? 'background: rgba(128, 90, 213, 0.25); border-left: 3px solid var(--accent-purple);' : rowIdx % 2 === 1 ? 'background: var(--bg-row-alt);' : ''}">
+                                                        <td style="padding: 6px 8px; color: var(--text-strike);"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: var(--text-primary); font-weight: 500;">${opt.bid.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: var(--text-primary); font-weight: 500;">${opt.ask.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right;">${opt.delta.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right;">${opt.ror.toFixed(1)}%</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: var(--warning-orange); font-weight: ${opt.is_suggested ? 'bold' : 'normal'};">${opt.sharpe ? opt.sharpe.toFixed(2) : '-'}</td>
+                                                        <td style="padding: 6px 8px; text-align: right;">${opt.theta.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">${opt.volume.toLocaleString()}</td>
+                                                        <td style="padding: 6px 8px; text-align: right;">${opt.gamma.toFixed(3)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right;">${opt.vega.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right;">${opt.last.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right;">${opt.premium.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right;">${(opt.implied_volatility * 100).toFixed(0)}%</td>
                                                     </tr>
                                                 `).join('')}
                                             </tbody>
@@ -1319,18 +1378,19 @@
             if (!chartFullData) return;
 
             currentChartRange = days;
+            const styles = getComputedStyle(document.documentElement);
 
             // Update button styles
             const buttons = document.querySelectorAll(`#chartRangeButtons_${ticker} .range-btn`);
             buttons.forEach(btn => {
                 if (parseInt(btn.dataset.range) === days) {
-                    btn.style.background = 'rgba(88, 166, 255, 0.2)';
-                    btn.style.borderColor = '#58a6ff';
-                    btn.style.color = '#58a6ff';
+                    btn.style.background = styles.getPropertyValue('--tab-selected-bg').trim();
+                    btn.style.borderColor = styles.getPropertyValue('--tab-selected-border').trim();
+                    btn.style.color = styles.getPropertyValue('--tab-selected-text').trim();
                 } else {
-                    btn.style.background = '#21262d';
-                    btn.style.borderColor = '#30363d';
-                    btn.style.color = '#8b949e';
+                    btn.style.background = styles.getPropertyValue('--tab-bg').trim();
+                    btn.style.borderColor = styles.getPropertyValue('--border-color').trim();
+                    btn.style.color = styles.getPropertyValue('--text-secondary').trim();
                 }
             });
 
@@ -1677,6 +1737,9 @@
         document.getElementById('multiTickers').addEventListener('input', (e) => {
             e.target.value = e.target.value.toUpperCase();
         });
+
+        // Apply theme on load
+        document.documentElement.setAttribute('data-theme', THEME);
     </script>
 </body>
 </html>
