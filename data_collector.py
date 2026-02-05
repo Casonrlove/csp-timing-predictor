@@ -1,9 +1,10 @@
 """
 Data collection and feature engineering for CSP timing model
 Focuses on technical support levels and optimal entry points
+Uses Schwab API for accurate market data
 """
 
-import yfinance as yf
+import yfinance as yf  # Fallback and for earnings dates
 import pandas as pd
 import numpy as np
 from ta.momentum import RSIIndicator, StochasticOscillator
@@ -12,6 +13,13 @@ from ta.volatility import BollingerBands, AverageTrueRange
 from ta.volume import OnBalanceVolumeIndicator, VolumeWeightedAveragePrice
 from datetime import datetime, timedelta
 
+# Try to import Schwab client
+try:
+    from schwab_client import get_price_history
+    SCHWAB_AVAILABLE = True
+except ImportError:
+    SCHWAB_AVAILABLE = False
+
 
 class CSPDataCollector:
     def __init__(self, ticker='NVDA', period='10y'):
@@ -19,19 +27,98 @@ class CSPDataCollector:
         self.period = period
         self.data = None
 
-    def fetch_data(self):
-        """Fetch historical stock data"""
-        print(f"Fetching data for {self.ticker}...")
-        stock = yf.Ticker(self.ticker)
-        self.data = stock.history(period=self.period)
+    def _parse_period(self, period):
+        """Convert period string to Schwab API parameters"""
+        # period can be '10y', '5y', '1y', '6mo', etc.
+        period = period.lower()
+        if period.endswith('y'):
+            years = int(period[:-1])
+            if years >= 10:
+                return 'year', 10, 'daily', 1
+            elif years >= 5:
+                return 'year', 5, 'daily', 1
+            elif years >= 3:
+                return 'year', 3, 'daily', 1
+            elif years >= 2:
+                return 'year', 2, 'daily', 1
+            else:
+                return 'year', 1, 'daily', 1
+        elif period.endswith('mo'):
+            months = int(period[:-2])
+            return 'month', months, 'daily', 1
+        else:
+            return 'year', 1, 'daily', 1
 
-        # Try to get earnings dates
+    def _schwab_candles_to_df(self, data):
+        """Convert Schwab candles response to pandas DataFrame"""
+        if not data or 'candles' not in data:
+            return None
+
+        candles = data['candles']
+        if not candles:
+            return None
+
+        df = pd.DataFrame(candles)
+        # Schwab returns: datetime (epoch ms), open, high, low, close, volume
+        df['datetime'] = pd.to_datetime(df['datetime'], unit='ms')
+        df.set_index('datetime', inplace=True)
+        df.index = df.index.tz_localize(None)  # Remove timezone
+
+        # Rename columns to match yfinance format
+        df.columns = [col.capitalize() for col in df.columns]
+        df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
+
+        return df
+
+    def fetch_data(self):
+        """Fetch historical stock data from Schwab API (with Yahoo fallback)"""
+        print(f"Fetching data for {self.ticker}...")
+
+        data_source = "Yahoo"
+
+        # Try Schwab first
+        if SCHWAB_AVAILABLE:
+            try:
+                period_type, period_num, freq_type, freq = self._parse_period(self.period)
+                print(f"[Schwab] Fetching {period_num} {period_type}(s) of daily data...")
+
+                schwab_data = get_price_history(
+                    self.ticker,
+                    period_type=period_type,
+                    period=period_num,
+                    frequency_type=freq_type,
+                    frequency=freq
+                )
+
+                self.data = self._schwab_candles_to_df(schwab_data)
+
+                if self.data is not None and len(self.data) > 0:
+                    data_source = "Schwab"
+                    print(f"[Schwab] Loaded {len(self.data)} days of price history")
+                else:
+                    print("[Schwab] No data returned, falling back to Yahoo")
+                    self.data = None
+
+            except Exception as e:
+                print(f"[Schwab] Error fetching price history: {e}")
+                print("[Schwab] Falling back to Yahoo Finance")
+                self.data = None
+
+        # Fallback to Yahoo Finance
+        if self.data is None:
+            stock = yf.Ticker(self.ticker)
+            self.data = stock.history(period=self.period)
+            data_source = "Yahoo"
+            print(f"[Yahoo] Loaded {len(self.data)} days of price history")
+
+        # Get earnings dates from Yahoo (Schwab doesn't provide this)
         try:
+            stock = yf.Ticker(self.ticker)
             earnings_dates = stock.earnings_dates
             if earnings_dates is not None and len(earnings_dates) > 0:
-                # Convert earnings dates to datetime if needed
                 earnings_list = earnings_dates.index.tolist()
-                self.earnings_dates = [pd.Timestamp(d) for d in earnings_list]
+                # Make earnings dates tz-naive to match price data
+                self.earnings_dates = [pd.Timestamp(d).tz_localize(None) if pd.Timestamp(d).tzinfo else pd.Timestamp(d) for d in earnings_list]
                 print(f"Loaded {len(self.earnings_dates)} earnings dates")
             else:
                 self.earnings_dates = []
@@ -40,32 +127,55 @@ class CSPDataCollector:
             print(f"Could not fetch earnings dates: {e}")
             self.earnings_dates = []
 
-        # Try to get VIX for market volatility context
+        # Get VIX data - try Schwab first, then Yahoo
         vix_loaded = False
-        try:
-            vix = yf.Ticker('^VIX')
-            vix_data = vix.history(period=self.period)
-            if len(vix_data) > 0 and 'Close' in vix_data.columns:
-                vix_data = vix_data[['Close']]
-                vix_data.columns = ['VIX']
-                # Merge VIX data
-                self.data = self.data.join(vix_data, how='left')
-                # Forward fill then backward fill
-                self.data['VIX'] = self.data['VIX'].ffill().bfill()
-                # If still NaN, use default
-                if self.data['VIX'].isna().any():
-                    self.data['VIX'] = self.data['VIX'].fillna(15.0)
-                vix_loaded = True
-                print(f"VIX data loaded: {self.data['VIX'].notna().sum()} values")
-        except Exception as e:
-            print(f"Warning: Could not fetch VIX data ({e})")
+        if SCHWAB_AVAILABLE:
+            try:
+                period_type, period_num, freq_type, freq = self._parse_period(self.period)
+                vix_data = get_price_history(
+                    '$VIX',
+                    period_type=period_type,
+                    period=period_num,
+                    frequency_type=freq_type,
+                    frequency=freq
+                )
+                vix_df = self._schwab_candles_to_df(vix_data)
+                if vix_df is not None and len(vix_df) > 0:
+                    vix_df = vix_df[['Close']]
+                    vix_df.columns = ['VIX']
+                    self.data = self.data.join(vix_df, how='left')
+                    self.data['VIX'] = self.data['VIX'].ffill().bfill()
+                    if self.data['VIX'].isna().any():
+                        self.data['VIX'] = self.data['VIX'].fillna(15.0)
+                    vix_loaded = True
+                    print(f"[Schwab] VIX data loaded: {self.data['VIX'].notna().sum()} values")
+            except Exception as e:
+                print(f"[Schwab] Could not fetch VIX: {e}")
 
-        # If VIX not loaded or all NaN, use constant value
+        # Fallback to Yahoo for VIX
+        if not vix_loaded:
+            try:
+                vix = yf.Ticker('^VIX')
+                vix_data = vix.history(period=self.period)
+                if len(vix_data) > 0 and 'Close' in vix_data.columns:
+                    vix_data = vix_data[['Close']]
+                    vix_data.columns = ['VIX']
+                    self.data = self.data.join(vix_data, how='left')
+                    self.data['VIX'] = self.data['VIX'].ffill().bfill()
+                    if self.data['VIX'].isna().any():
+                        self.data['VIX'] = self.data['VIX'].fillna(15.0)
+                    vix_loaded = True
+                    print(f"[Yahoo] VIX data loaded: {self.data['VIX'].notna().sum()} values")
+            except Exception as e:
+                print(f"Warning: Could not fetch VIX data ({e})")
+
+        # If VIX not loaded, use constant value
         if not vix_loaded or 'VIX' not in self.data.columns or self.data['VIX'].isna().all():
             print("Using constant VIX value (15.0)")
             self.data['VIX'] = 15.0
 
-        print(f"Fetched {len(self.data)} days of data")
+        print(f"Fetched {len(self.data)} days of data (source: {data_source})")
+        self.data_source = data_source
         return self.data
 
     def calculate_support_resistance(self, window=20):
@@ -196,7 +306,11 @@ class CSPDataCollector:
 
         for date in dates:
             # Find nearest earnings date (past or future)
+            # Ensure date is tz-naive
             date = pd.Timestamp(date)
+            if date.tzinfo is not None:
+                date = date.tz_localize(None)
+
             if len(self.earnings_dates) == 0:
                 days_to_earnings.append(999)
                 continue
