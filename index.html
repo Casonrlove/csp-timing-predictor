@@ -527,7 +527,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v2.0.0</div>
+            <div class="version">v2.0.1</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -1004,14 +1004,25 @@
                     <!-- Price Chart with Projections -->
                     ${data.price_history && data.price_history.length > 0 ? `
                     <div style="margin: 20px 0; padding: 15px; background: #161b22; border: 1px solid #30363d; border-radius: 8px;">
-                        <h4 style="margin: 0 0 10px 0; color: #58a6ff;">📈 Price Chart & 35-Day Projection</h4>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 10px;">
+                            <h4 style="margin: 0; color: #58a6ff;">📈 Price Chart & 35-Day Projection</h4>
+                            <div id="chartRangeButtons_${data.ticker}" style="display: flex; gap: 5px;">
+                                <button onclick="setChartRange('${data.ticker}', 5)" class="range-btn" data-range="5" style="padding: 4px 10px; font-size: 0.75rem; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; cursor: pointer;">1W</button>
+                                <button onclick="setChartRange('${data.ticker}', 22)" class="range-btn" data-range="22" style="padding: 4px 10px; font-size: 0.75rem; background: rgba(88, 166, 255, 0.2); border: 1px solid #58a6ff; color: #58a6ff; border-radius: 4px; cursor: pointer;">1M</button>
+                                <button onclick="setChartRange('${data.ticker}', 66)" class="range-btn" data-range="66" style="padding: 4px 10px; font-size: 0.75rem; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; cursor: pointer;">3M</button>
+                                <button onclick="setChartRange('${data.ticker}', 132)" class="range-btn" data-range="132" style="padding: 4px 10px; font-size: 0.75rem; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; cursor: pointer;">6M</button>
+                            </div>
+                        </div>
                         <div style="position: relative; height: 300px;">
                             <canvas id="priceChart_${data.ticker}"></canvas>
+                        </div>
+                        <div id="chartTooltip_${data.ticker}" style="position: absolute; top: 10px; right: 15px; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 10;">
                         </div>
                         <div style="margin-top: 10px; display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.75rem; color: #8b949e;">
                             <span>━ Price</span>
                             <span style="color: #58a6ff;">━ SMA 20</span>
                             <span style="color: #d29922;">━ SMA 50</span>
+                            <span style="color: #a371f7;">━ SMA 200</span>
                             <span style="color: rgba(63, 185, 80, 0.8);">▓ Safe Zone (Model)</span>
                             <span style="color: rgba(248, 81, 73, 0.5);">▓ Risk Zone (-5%)</span>
                         </div>
@@ -1301,21 +1312,53 @@
         }
 
         let priceChartInstance = null;
+        let chartFullData = null;  // Store full data for range switching
+        let currentChartRange = 22;  // Default to 1 month
 
-        function renderPriceChart(data) {
+        function setChartRange(ticker, days) {
+            if (!chartFullData) return;
+
+            currentChartRange = days;
+
+            // Update button styles
+            const buttons = document.querySelectorAll(`#chartRangeButtons_${ticker} .range-btn`);
+            buttons.forEach(btn => {
+                if (parseInt(btn.dataset.range) === days) {
+                    btn.style.background = 'rgba(88, 166, 255, 0.2)';
+                    btn.style.borderColor = '#58a6ff';
+                    btn.style.color = '#58a6ff';
+                } else {
+                    btn.style.background = '#21262d';
+                    btn.style.borderColor = '#30363d';
+                    btn.style.color = '#8b949e';
+                }
+            });
+
+            // Re-render chart with new range
+            renderPriceChart(chartFullData, days);
+        }
+
+        function renderPriceChart(data, rangeDays = 22) {
             const ctx = document.getElementById(`priceChart_${data.ticker}`);
             if (!ctx) return;
+
+            // Store full data for range switching
+            chartFullData = data;
 
             // Destroy existing chart
             if (priceChartInstance) {
                 priceChartInstance.destroy();
             }
 
-            const history = data.price_history;
+            // Filter history to requested range
+            const fullHistory = data.price_history;
+            const history = fullHistory.slice(-rangeDays);
+
             const labels = history.map(d => d.date);
             const prices = history.map(d => d.close);
             const sma20 = history.map(d => d.sma20);
             const sma50 = history.map(d => d.sma50);
+            const sma200 = history.map(d => d.sma200);
 
             // Calculate projection dates (35 days forward)
             const lastDate = new Date(history[history.length - 1].date);
@@ -1336,13 +1379,15 @@
             const projectedPrice = currentPrice * (1 + expectedReturn);
 
             // Create projection bands
-            const volatility = Math.abs(prices[prices.length - 1] - prices[prices.length - 20]) / prices[prices.length - 20];
-            const dailyVol = volatility / Math.sqrt(20) * 1.5;
+            const lookback = Math.min(20, prices.length);
+            const volatility = Math.abs(prices[prices.length - 1] - prices[prices.length - lookback]) / prices[prices.length - lookback];
+            const dailyVol = volatility / Math.sqrt(lookback) * 1.5;
 
             const allLabels = [...labels, ...projectionDates];
             const pricesWithNull = [...prices, ...new Array(35).fill(null)];
             const sma20WithNull = [...sma20, ...new Array(35).fill(null)];
             const sma50WithNull = [...sma50, ...new Array(35).fill(null)];
+            const sma200WithNull = [...sma200, ...new Array(35).fill(null)];
 
             // Projection line (center)
             const projectionLine = [...new Array(prices.length).fill(null)];
@@ -1365,6 +1410,9 @@
 
             // Risk threshold line
             const riskLine = allLabels.map((_, i) => i >= prices.length - 1 ? riskThreshold : null);
+
+            // Custom tooltip element
+            const tooltipEl = document.getElementById(`chartTooltip_${data.ticker}`);
 
             priceChartInstance = new Chart(ctx, {
                 type: 'line',
@@ -1399,6 +1447,15 @@
                             borderDash: [3, 3]
                         },
                         {
+                            label: 'SMA 200',
+                            data: sma200WithNull,
+                            borderColor: '#a371f7',
+                            backgroundColor: 'transparent',
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            borderDash: [5, 3]
+                        },
+                        {
                             label: 'Projection',
                             data: projectionLine,
                             borderColor: data.csp_score > 0 ? '#3fb950' : '#f85149',
@@ -1425,7 +1482,7 @@
                             pointRadius: 0
                         },
                         {
-                            label: '-5% Risk Threshold',
+                            label: '-5% Risk',
                             data: riskLine,
                             borderColor: '#f85149',
                             backgroundColor: 'rgba(248, 81, 73, 0.1)',
@@ -1448,16 +1505,38 @@
                             display: false
                         },
                         tooltip: {
-                            backgroundColor: '#1c2128',
-                            titleColor: '#e6edf3',
-                            bodyColor: '#8b949e',
-                            borderColor: '#30363d',
-                            borderWidth: 1,
-                            callbacks: {
-                                label: function(context) {
-                                    if (context.raw === null) return null;
-                                    return `${context.dataset.label}: $${context.raw.toFixed(2)}`;
+                            enabled: false,  // Disable default tooltip
+                            external: function(context) {
+                                if (!tooltipEl) return;
+
+                                const tooltipModel = context.tooltip;
+
+                                // Hide if no tooltip
+                                if (tooltipModel.opacity === 0) {
+                                    tooltipEl.style.opacity = 0;
+                                    return;
                                 }
+
+                                // Build tooltip content
+                                if (tooltipModel.body) {
+                                    const titleLines = tooltipModel.title || [];
+                                    const bodyLines = tooltipModel.body.map(b => b.lines);
+
+                                    let html = `<div style="color: #e6edf3; font-weight: 600; margin-bottom: 5px;">${titleLines[0] || ''}</div>`;
+
+                                    bodyLines.forEach((body, i) => {
+                                        const line = body[0];
+                                        if (line && !line.includes('null')) {
+                                            const colors = ['#e6edf3', '#58a6ff', '#d29922', '#a371f7', data.csp_score > 0 ? '#3fb950' : '#f85149', 'rgba(63, 185, 80, 0.8)', 'rgba(248, 81, 73, 0.8)', '#f85149'];
+                                            const color = colors[i] || '#8b949e';
+                                            html += `<div style="color: ${color};">${line}</div>`;
+                                        }
+                                    });
+
+                                    tooltipEl.innerHTML = html;
+                                }
+
+                                tooltipEl.style.opacity = 1;
                             }
                         }
                     },

@@ -515,10 +515,10 @@ def predict(request: PredictionRequest):
                 print(f"Could not check market status: {e}")
                 market_status = {"message": "Could not determine market status"}
 
-        # Build price history for charting (last 90 days)
+        # Build price history for charting (last 180 days for 6-month view)
         price_history = []
         try:
-            hist_df = collector.data.tail(90)
+            hist_df = collector.data.tail(180)
             for idx, row in hist_df.iterrows():
                 date_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]
                 price_history.append({
@@ -527,7 +527,8 @@ def predict(request: PredictionRequest):
                     'high': round(float(row['High']), 2),
                     'low': round(float(row['Low']), 2),
                     'sma20': round(float(row.get('SMA_20', row['Close'])), 2),
-                    'sma50': round(float(row.get('SMA_50', row['Close'])), 2)
+                    'sma50': round(float(row.get('SMA_50', row['Close'])), 2),
+                    'sma200': round(float(row.get('SMA_200', row['Close'])), 2)
                 })
         except Exception as hist_err:
             print(f"Failed to build price history: {hist_err}")
