@@ -253,6 +253,9 @@ class UltimateTrainer:
             if self.use_gpu:
                 params['tree_method'] = 'hist'
                 params['device'] = 'cuda'
+                params['max_bin'] = 512  # More bins = more GPU parallelism
+                params['grow_policy'] = 'lossguide'  # Better for GPU
+                params['max_leaves'] = 256  # More leaves = more parallel work
             else:
                 params['n_jobs'] = -1
 
@@ -393,6 +396,9 @@ class UltimateTrainer:
             if self.use_gpu:
                 xgb_params['tree_method'] = 'hist'
                 xgb_params['device'] = 'cuda'
+                xgb_params['max_bin'] = 512
+                xgb_params['grow_policy'] = 'lossguide'
+                xgb_params['max_leaves'] = 256
             xgb_model = xgb.XGBClassifier(**xgb_params)
             estimators.append(('xgb', xgb_model))
             print("  + XGBoost")
@@ -462,6 +468,9 @@ class UltimateTrainer:
             if self.use_gpu:
                 params['tree_method'] = 'hist'
                 params['device'] = 'cuda'
+                params['max_bin'] = 512
+                params['grow_policy'] = 'lossguide'
+                params['max_leaves'] = 256
             self.model = xgb.XGBClassifier(**params)
 
         elif model_type == 'lightgbm' and 'lightgbm' in self.best_params:
