@@ -829,7 +829,7 @@
                                             </strong>
                                         </td>
                                         <td style="padding: 8px; text-align: right;">$${opp.current_price.toFixed(2)}</td>
-                                        <td style="padding: 8px; text-align: right;">$${opp.strike.toFixed(0)}</td>
+                                        <td style="padding: 8px; text-align: right;">$${opp.strike.toFixed(2)}</td>
                                         <td style="padding: 8px; text-align: right;">${opp.dte}d</td>
                                         <td style="padding: 8px; text-align: right;">${opp.delta.toFixed(2)}</td>
                                         <td style="padding: 8px; text-align: right; color: #3fb950; font-weight: bold;">+${opp.edge.toFixed(1)}</td>
@@ -1229,7 +1229,7 @@
                                             <tbody>
                                                 ${expData.options.map(opt => `
                                                     <tr style="border-bottom: 1px solid #30363d; ${opt.is_suggested ? 'background: rgba(110, 64, 201, 0.25); border-left: 3px solid #6e40c9;' : opt.edge > 2 ? 'background: rgba(63, 185, 80, 0.1);' : opt.edge < -2 ? 'background: rgba(248, 81, 73, 0.1);' : ''}">
-                                                        <td style="padding: 4px 5px;"><strong>$${opt.strike.toFixed(0)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
+                                                        <td style="padding: 4px 5px;"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.bid.toFixed(2)}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.ask.toFixed(2)}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.delta.toFixed(2)}</td>
