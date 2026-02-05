@@ -344,7 +344,7 @@ def predict(request: PredictionRequest):
 
             if SCHWAB_AVAILABLE:
                 try:
-                    all_options = get_csp_options_schwab(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
+                    all_options = get_csp_options_schwab(ticker, min_delta=request.min_delta, max_delta=request.max_delta, max_dte=200)
                     if all_options:
                         options_source = "Schwab"
                         print(f"[Schwab] Found {len(all_options)} options")

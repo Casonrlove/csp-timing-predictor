@@ -398,7 +398,7 @@ def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.60, month
     return options
 
 
-def get_csp_options_schwab(ticker, min_delta=0.10, max_delta=0.60, min_dte=15, max_dte=120, monthlies_only=True):
+def get_csp_options_schwab(ticker, min_delta=0.10, max_delta=0.60, min_dte=15, max_dte=200, monthlies_only=True):
     """
     Get CSP options using Schwab API (replaces Yahoo Finance + Black-Scholes)
 
@@ -409,7 +409,7 @@ def get_csp_options_schwab(ticker, min_delta=0.10, max_delta=0.60, min_dte=15, m
         min_delta: Minimum delta (default 0.10)
         max_delta: Maximum delta (default 0.50)
         min_dte: Minimum days to expiration (default 15)
-        max_dte: Maximum days to expiration (default 90 for 2 monthlies)
+        max_dte: Maximum days to expiration (default 200 for 6+ months)
         monthlies_only: If True, only return monthly expirations
 
     Returns:
@@ -420,7 +420,7 @@ def get_csp_options_schwab(ticker, min_delta=0.10, max_delta=0.60, min_dte=15, m
         chain = get_option_chain(
             symbol=ticker,
             contract_type='PUT',
-            strike_count=40,  # More strikes to capture full delta range
+            strike_count=50,  # More strikes to capture full delta range
             min_dte=min_dte,
             max_dte=max_dte
         )
