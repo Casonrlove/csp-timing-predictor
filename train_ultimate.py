@@ -42,6 +42,20 @@ except ImportError:
     OPTUNA_AVAILABLE = False
     print("Install optuna: pip install optuna")
 
+def format_time(seconds):
+    """Format seconds into human readable string"""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        mins = seconds // 60
+        secs = seconds % 60
+        return f"{int(mins)}m {int(secs)}s"
+    else:
+        hours = seconds // 3600
+        mins = (seconds % 3600) // 60
+        return f"{int(hours)}h {int(mins)}m"
+
+
 class UltimateTrainer:
     """Maximum accuracy model training"""
 
@@ -576,14 +590,24 @@ def main():
     print(f"  Period: {args.period}")
     print(f"  LSTM: {'Disabled' if args.no_lstm else f'Enabled ({args.lstm_epochs} epochs)'}")
 
+    # Track timing
+    timings = {}
+    total_start = time.time()
+
     # Initialize
     trainer = UltimateTrainer(tickers=tickers, use_gpu=not args.no_gpu, use_lstm=not args.no_lstm)
 
     # Collect data
+    start = time.time()
     df = trainer.collect_data(period=args.period)
+    timings['Data Collection'] = time.time() - start
+    print(f"⏱️  Data collection: {format_time(timings['Data Collection'])}")
 
     # Train LSTM and generate features
+    start = time.time()
     lstm_features = trainer.train_lstm_features(epochs=args.lstm_epochs)
+    timings['LSTM Training'] = time.time() - start
+    print(f"⏱️  LSTM training: {format_time(timings['LSTM Training'])}")
 
     # Add LSTM features to training data
     df = trainer.add_lstm_features(df, lstm_features)
@@ -596,25 +620,46 @@ def main():
     print("HYPERPARAMETER OPTIMIZATION")
     print("="*70)
 
+    start = time.time()
     trainer.tune_xgboost(X_train, y_train, n_trials=args.trials)
+    timings['XGBoost Tuning'] = time.time() - start
+    print(f"⏱️  XGBoost tuning: {format_time(timings['XGBoost Tuning'])}")
 
     if LIGHTGBM_AVAILABLE:
+        start = time.time()
         trainer.tune_lightgbm(X_train, y_train, n_trials=args.trials)
+        timings['LightGBM Tuning'] = time.time() - start
+        print(f"⏱️  LightGBM tuning: {format_time(timings['LightGBM Tuning'])}")
 
+    start = time.time()
     trainer.tune_random_forest(X_train, y_train, n_trials=max(30, args.trials // 2))
+    timings['Random Forest Tuning'] = time.time() - start
+    print(f"⏱️  Random Forest tuning: {format_time(timings['Random Forest Tuning'])}")
 
     # Train final model
+    start = time.time()
     if args.ensemble:
         trainer.train_ensemble(X_train, y_train, X_test, y_test)
     else:
         # Use best single model (XGBoost usually)
         trainer.train_single_best(X_train, y_train, X_test, y_test, 'xgboost')
+    timings['Final Model Training'] = time.time() - start
+    print(f"⏱️  Final model training: {format_time(timings['Final Model Training'])}")
 
     # Save
     trainer.save_model(args.output)
 
+    total_time = time.time() - total_start
+
     print(f"\n{'='*70}")
     print("✅ TRAINING COMPLETE!")
+    print("="*70)
+    print("\n⏱️  TIMING SUMMARY:")
+    print("-" * 40)
+    for step, duration in timings.items():
+        print(f"  {step:.<30} {format_time(duration):>8}")
+    print("-" * 40)
+    print(f"  {'TOTAL':.<30} {format_time(total_time):>8}")
     print("="*70)
     print("\nRestart API server to use new model:")
     print("  pkill -f simple_api_server && python simple_api_server.py --port 8000 &")
