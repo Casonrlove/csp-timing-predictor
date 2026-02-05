@@ -57,12 +57,30 @@ class StrikeProbabilityModel:
     # Quantiles to predict - covers the range of typical deltas
     QUANTILES = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
 
-    def __init__(self, forward_days=35):
+    def __init__(self, forward_days=35, use_gpu=True):
         self.forward_days = forward_days
         self.scaler = StandardScaler()
         self.quantile_models = {}  # One model per quantile
         self.median_model = None   # For point estimate
         self.feature_cols = None
+
+        # Check GPU availability
+        self.use_gpu = use_gpu and self._check_gpu()
+        if self.use_gpu:
+            print("GPU acceleration enabled (CUDA)")
+        else:
+            print("Using CPU (GPU not available or disabled)")
+
+    def _check_gpu(self):
+        """Check if GPU is available for XGBoost"""
+        try:
+            # Try to create a small GPU model
+            test_model = xgb.XGBRegressor(tree_method='gpu_hist', device='cuda', n_estimators=1)
+            test_model.fit([[1, 2], [3, 4]], [1, 2])
+            return True
+        except Exception as e:
+            print(f"GPU not available: {e}")
+            return False
 
     def collect_data(self, tickers=None, period='10y'):
         """Collect and prepare training data from multiple tickers"""
@@ -136,10 +154,11 @@ class StrikeProbabilityModel:
         return X, y
 
     def train_quantile_models(self, X, y, n_splits=5):
-        """Train quantile regression models for each quantile"""
+        """Train quantile regression models for each quantile using GPU if available"""
 
         print(f"\nTraining quantile regression models...")
         print(f"Quantiles: {self.QUANTILES}")
+        print(f"Device: {'GPU (CUDA)' if self.use_gpu else 'CPU'}")
 
         # Scale features
         X_scaled = self.scaler.fit_transform(X)
@@ -147,10 +166,23 @@ class StrikeProbabilityModel:
         # Time series split for validation
         tscv = TimeSeriesSplit(n_splits=n_splits)
 
+        # GPU/CPU parameters
+        if self.use_gpu:
+            device_params = {
+                'tree_method': 'gpu_hist',
+                'device': 'cuda',
+                'n_jobs': 1,  # GPU handles parallelism
+            }
+        else:
+            device_params = {
+                'tree_method': 'hist',
+                'n_jobs': -1,
+            }
+
         for quantile in self.QUANTILES:
             print(f"\n  Training q={quantile:.2f} model...")
 
-            # XGBoost with quantile loss
+            # XGBoost with quantile loss + GPU acceleration
             model = xgb.XGBRegressor(
                 objective='reg:quantileerror',
                 quantile_alpha=quantile,
@@ -162,7 +194,7 @@ class StrikeProbabilityModel:
                 reg_alpha=0.1,
                 reg_lambda=1.0,
                 random_state=42,
-                n_jobs=-1
+                **device_params
             )
 
             # Cross-validation scores
@@ -197,7 +229,7 @@ class StrikeProbabilityModel:
             reg_alpha=0.1,
             reg_lambda=1.0,
             random_state=42,
-            n_jobs=-1
+            **device_params
         )
         self.median_model.fit(X_scaled, y, verbose=False)
 
@@ -318,6 +350,8 @@ def main():
     parser.add_argument('--tickers', nargs='+', help='Tickers to train on (default: all)')
     parser.add_argument('--period', default='10y', help='Data period (default: 10y)')
     parser.add_argument('--output', default='strike_probability_model.pkl', help='Output model path')
+    parser.add_argument('--no-gpu', action='store_true', help='Disable GPU acceleration')
+    parser.add_argument('--n-estimators', type=int, default=500, help='Number of trees (default: 500)')
     args = parser.parse_args()
 
     print("="*70)
@@ -327,7 +361,7 @@ def main():
     print("Output is directly comparable to market delta")
     print()
 
-    model = StrikeProbabilityModel(forward_days=35)
+    model = StrikeProbabilityModel(forward_days=35, use_gpu=not args.no_gpu)
 
     # Collect data
     tickers = args.tickers if args.tickers else None
