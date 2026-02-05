@@ -73,6 +73,12 @@ class PredictionResponse(BaseModel):
     available_expirations: Optional[list] = None  # List of available monthly expirations
     data_source: Optional[dict] = None  # Shows where data came from (Schwab vs Yahoo)
     market_status: Optional[dict] = None  # Market open/closed status from Schwab
+    price_history: Optional[list] = None  # Historical price data for charting
+
+
+class PriceHistoryRequest(BaseModel):
+    ticker: str
+    days: Optional[int] = 90  # Default 90 days of history
 
 
 class MultiTickerRequest(BaseModel):
@@ -509,6 +515,23 @@ def predict(request: PredictionRequest):
                 print(f"Could not check market status: {e}")
                 market_status = {"message": "Could not determine market status"}
 
+        # Build price history for charting (last 90 days)
+        price_history = []
+        try:
+            hist_df = collector.data.tail(90)
+            for idx, row in hist_df.iterrows():
+                date_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]
+                price_history.append({
+                    'date': date_str,
+                    'close': round(float(row['Close']), 2),
+                    'high': round(float(row['High']), 2),
+                    'low': round(float(row['Low']), 2),
+                    'sma20': round(float(row.get('SMA_20', row['Close'])), 2),
+                    'sma50': round(float(row.get('SMA_50', row['Close'])), 2)
+                })
+        except Exception as hist_err:
+            print(f"Failed to build price history: {hist_err}")
+
         # Calculate confidence (decisiveness) - p_safe, p_downside, csp_score already calculated above
         confidence = abs(csp_score)  # Model decisiveness (0=unsure, 1=decisive)
 
@@ -551,7 +574,8 @@ def predict(request: PredictionRequest):
                 "options": options_source,
                 "greeks": "Schwab API" if options_source == "Schwab" else "Black-Scholes (calculated)"
             },
-            market_status=market_status
+            market_status=market_status,
+            price_history=price_history if price_history else None
         )
 
     except Exception as e:

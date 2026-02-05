@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSP Timing Predictor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <style>
         /* Power E*Trade inspired dark theme */
         :root {
@@ -525,7 +527,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.9.1</div>
+            <div class="version">v2.0.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -548,20 +550,6 @@
                 <small style="color: #666; display: block; margin-top: 5px;">
                     Get this from ngrok after starting your local server
                 </small>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>🏆 Top CSP Opportunities</h2>
-            <p style="color: #8b949e; margin-bottom: 15px;">Scan popular tickers to find the best CSP trades ranked by edge</p>
-            <div class="button-group" style="margin-bottom: 15px;">
-                <button onclick="scanTopOpportunities()">🔍 Scan All Tickers</button>
-                <span id="scanStatus" style="color: #8b949e; margin-left: 10px;"></span>
-            </div>
-            <div id="topOpportunities">
-                <div style="padding: 20px; text-align: center; color: #8b949e;">
-                    Click "Scan All Tickers" to find the best CSP opportunities
-                </div>
             </div>
         </div>
 
@@ -695,6 +683,20 @@
             </div>
             <button onclick="predictMulti()">📊 Compare All</button>
             <div id="multiResults"></div>
+        </div>
+
+        <div class="card">
+            <h2>🏆 Top CSP Opportunities</h2>
+            <p style="color: #8b949e; margin-bottom: 15px;">Scan popular tickers to find the best CSP trades ranked by edge</p>
+            <div class="button-group" style="margin-bottom: 15px;">
+                <button onclick="scanTopOpportunities()">🔍 Scan All Tickers</button>
+                <span id="scanStatus" style="color: #8b949e; margin-left: 10px;"></span>
+            </div>
+            <div id="topOpportunities">
+                <div style="padding: 20px; text-align: center; color: #8b949e;">
+                    Click "Scan All Tickers" to find the best CSP opportunities
+                </div>
+            </div>
         </div>
     </div>
 
@@ -999,6 +1001,23 @@
                         </div>
                     </div>
 
+                    <!-- Price Chart with Projections -->
+                    ${data.price_history && data.price_history.length > 0 ? `
+                    <div style="margin: 20px 0; padding: 15px; background: #161b22; border: 1px solid #30363d; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #58a6ff;">📈 Price Chart & 35-Day Projection</h4>
+                        <div style="position: relative; height: 300px;">
+                            <canvas id="priceChart_${data.ticker}"></canvas>
+                        </div>
+                        <div style="margin-top: 10px; display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.75rem; color: #8b949e;">
+                            <span>━ Price</span>
+                            <span style="color: #58a6ff;">━ SMA 20</span>
+                            <span style="color: #d29922;">━ SMA 50</span>
+                            <span style="color: rgba(63, 185, 80, 0.8);">▓ Safe Zone (Model)</span>
+                            <span style="color: rgba(248, 81, 73, 0.5);">▓ Risk Zone (-5%)</span>
+                        </div>
+                    </div>
+                    ` : ''}
+
                     <div class="technical-details">
                         <div class="technical-section">
                             <h4>Support / Resistance</h4>
@@ -1274,6 +1293,208 @@
             `;
 
             resultDiv.innerHTML = html;
+
+            // Render price chart if data available
+            if (data.price_history && data.price_history.length > 0) {
+                renderPriceChart(data);
+            }
+        }
+
+        let priceChartInstance = null;
+
+        function renderPriceChart(data) {
+            const ctx = document.getElementById(`priceChart_${data.ticker}`);
+            if (!ctx) return;
+
+            // Destroy existing chart
+            if (priceChartInstance) {
+                priceChartInstance.destroy();
+            }
+
+            const history = data.price_history;
+            const labels = history.map(d => d.date);
+            const prices = history.map(d => d.close);
+            const sma20 = history.map(d => d.sma20);
+            const sma50 = history.map(d => d.sma50);
+
+            // Calculate projection dates (35 days forward)
+            const lastDate = new Date(history[history.length - 1].date);
+            const projectionDates = [];
+            for (let i = 1; i <= 35; i++) {
+                const d = new Date(lastDate);
+                d.setDate(d.getDate() + i);
+                projectionDates.push(d.toISOString().slice(0, 10));
+            }
+
+            // Calculate projection zones
+            const currentPrice = data.current_price;
+            const riskThreshold = currentPrice * 0.95;  // -5% threshold
+
+            // Safe zone projection (based on model confidence)
+            const safeProb = data.p_safe;
+            const expectedReturn = safeProb > 0.5 ? (safeProb - 0.5) * 0.04 : -(0.5 - safeProb) * 0.08;
+            const projectedPrice = currentPrice * (1 + expectedReturn);
+
+            // Create projection bands
+            const volatility = Math.abs(prices[prices.length - 1] - prices[prices.length - 20]) / prices[prices.length - 20];
+            const dailyVol = volatility / Math.sqrt(20) * 1.5;
+
+            const allLabels = [...labels, ...projectionDates];
+            const pricesWithNull = [...prices, ...new Array(35).fill(null)];
+            const sma20WithNull = [...sma20, ...new Array(35).fill(null)];
+            const sma50WithNull = [...sma50, ...new Array(35).fill(null)];
+
+            // Projection line (center)
+            const projectionLine = [...new Array(prices.length).fill(null)];
+            for (let i = 0; i <= 35; i++) {
+                const progress = i / 35;
+                projectionLine.push(currentPrice + (projectedPrice - currentPrice) * progress);
+            }
+
+            // Upper and lower bounds
+            const upperBound = projectionLine.map((p, i) => {
+                if (p === null) return null;
+                const daysOut = Math.max(0, i - prices.length);
+                return p + (currentPrice * dailyVol * Math.sqrt(daysOut + 1));
+            });
+            const lowerBound = projectionLine.map((p, i) => {
+                if (p === null) return null;
+                const daysOut = Math.max(0, i - prices.length);
+                return p - (currentPrice * dailyVol * Math.sqrt(daysOut + 1));
+            });
+
+            // Risk threshold line
+            const riskLine = allLabels.map((_, i) => i >= prices.length - 1 ? riskThreshold : null);
+
+            priceChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: allLabels,
+                    datasets: [
+                        {
+                            label: 'Price',
+                            data: pricesWithNull,
+                            borderColor: '#e6edf3',
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'SMA 20',
+                            data: sma20WithNull,
+                            borderColor: '#58a6ff',
+                            backgroundColor: 'transparent',
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            borderDash: [3, 3]
+                        },
+                        {
+                            label: 'SMA 50',
+                            data: sma50WithNull,
+                            borderColor: '#d29922',
+                            backgroundColor: 'transparent',
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            borderDash: [3, 3]
+                        },
+                        {
+                            label: 'Projection',
+                            data: projectionLine,
+                            borderColor: data.csp_score > 0 ? '#3fb950' : '#f85149',
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            borderDash: [5, 5]
+                        },
+                        {
+                            label: 'Upper Band',
+                            data: upperBound,
+                            borderColor: 'rgba(63, 185, 80, 0.3)',
+                            backgroundColor: 'rgba(63, 185, 80, 0.1)',
+                            fill: '+1',
+                            borderWidth: 1,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Lower Band',
+                            data: lowerBound,
+                            borderColor: 'rgba(248, 81, 73, 0.3)',
+                            backgroundColor: 'transparent',
+                            borderWidth: 1,
+                            pointRadius: 0
+                        },
+                        {
+                            label: '-5% Risk Threshold',
+                            data: riskLine,
+                            borderColor: '#f85149',
+                            backgroundColor: 'rgba(248, 81, 73, 0.1)',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            borderDash: [10, 5],
+                            fill: 'origin'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: '#1c2128',
+                            titleColor: '#e6edf3',
+                            bodyColor: '#8b949e',
+                            borderColor: '#30363d',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    if (context.raw === null) return null;
+                                    return `${context.dataset.label}: $${context.raw.toFixed(2)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                color: '#21262d',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                color: '#8b949e',
+                                maxTicksLimit: 10,
+                                callback: function(val, index) {
+                                    const label = this.getLabelForValue(val);
+                                    // Show projection start marker
+                                    if (index === prices.length - 1) {
+                                        return 'Today';
+                                    }
+                                    return label.slice(5);  // Show MM-DD
+                                }
+                            }
+                        },
+                        y: {
+                            grid: {
+                                color: '#21262d',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                color: '#8b949e',
+                                callback: function(val) {
+                                    return '$' + val.toFixed(0);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
         }
 
         async function predictMulti() {
