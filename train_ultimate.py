@@ -1,6 +1,6 @@
 """
 ULTIMATE MODEL TRAINING - Maximum Accuracy
-Combines: More data, ensemble models, extensive tuning, walk-forward validation
+Combines: LSTM time series features, ensemble models, extensive tuning, walk-forward validation
 """
 
 import pandas as pd
@@ -19,6 +19,14 @@ try:
 except ImportError:
     lgb = None
     LIGHTGBM_AVAILABLE = False
+
+try:
+    from lstm_features import LSTMFeatureGenerator
+    LSTM_AVAILABLE = True
+except ImportError:
+    LSTM_AVAILABLE = False
+    print("LSTM features not available")
+
 import argparse
 import time
 import warnings
@@ -51,17 +59,19 @@ class UltimateTrainer:
         'SPY', 'QQQ', 'IWM', 'VOO', 'VTI', 'TQQQ', 'SQQQ', 'SCHD'
     ]
 
-    def __init__(self, tickers=None, use_gpu=True):
+    def __init__(self, tickers=None, use_gpu=True, use_lstm=True):
         if tickers is None:
             self.tickers = self.EXTENDED_TICKERS
         else:
             self.tickers = tickers
 
         self.use_gpu = use_gpu
+        self.use_lstm = use_lstm and LSTM_AVAILABLE
         self.scaler = StandardScaler()
         self.models = {}
         self.feature_cols = None
         self.best_params = {}
+        self.lstm_generator = None
 
         # Check GPU
         if self.use_gpu:
@@ -74,6 +84,7 @@ class UltimateTrainer:
                 self.use_gpu = False
 
         print(f"GPU: {'Enabled' if self.use_gpu else 'Disabled'}")
+        print(f"LSTM Features: {'Enabled' if self.use_lstm else 'Disabled'}")
 
     def collect_data(self, period='10y'):
         """Collect data from all tickers"""
@@ -82,6 +93,7 @@ class UltimateTrainer:
         print("="*70)
 
         all_data = []
+        all_raw_data = []  # Keep raw data for LSTM training
         successful = 0
 
         for i, ticker in enumerate(self.tickers):
@@ -92,6 +104,11 @@ class UltimateTrainer:
 
                 if self.feature_cols is None:
                     self.feature_cols = feature_cols
+
+                # Store raw data for LSTM
+                raw_df = collector.data.copy()
+                raw_df['ticker'] = ticker
+                all_raw_data.append(raw_df)
 
                 df['ticker'] = ticker
                 all_data.append(df)
@@ -106,6 +123,7 @@ class UltimateTrainer:
             raise ValueError("No data collected")
 
         combined_df = pd.concat(all_data, ignore_index=True)
+        self.raw_data = pd.concat(all_raw_data, ignore_index=True)
 
         print(f"\n{'='*70}")
         print(f"Total: {len(combined_df)} samples from {successful} tickers")
@@ -113,6 +131,72 @@ class UltimateTrainer:
         print("="*70)
 
         return combined_df
+
+    def train_lstm_features(self, epochs=50):
+        """Train LSTM and generate features"""
+        if not self.use_lstm:
+            print("\nLSTM features disabled, skipping...")
+            return None
+
+        print(f"\n{'='*70}")
+        print("TRAINING LSTM TIME SERIES MODEL")
+        print("="*70)
+
+        # Features for LSTM input (price and key indicators)
+        lstm_input_features = [
+            'Close', 'Volume', 'RSI', 'MACD', 'BB_Position',
+            'ATR_Pct', 'Return_1D', 'Return_5D', 'Volatility_20D',
+            'Price_to_SMA20', 'Price_to_SMA50', 'Stoch_K'
+        ]
+
+        # Filter to available features
+        available_features = [f for f in lstm_input_features if f in self.raw_data.columns]
+        print(f"  LSTM input features: {len(available_features)}")
+
+        # Train LSTM on raw data
+        self.lstm_generator = LSTMFeatureGenerator(
+            sequence_length=20,
+            hidden_size=128,
+            num_layers=2
+        )
+
+        # Use data with all required columns
+        train_data = self.raw_data.dropna(subset=available_features + ['Close'])
+
+        self.lstm_generator.fit(
+            train_data,
+            available_features,
+            epochs=epochs,
+            batch_size=128,
+            verbose=True
+        )
+
+        # Generate features for all data
+        print("\nGenerating LSTM features for training data...")
+        lstm_features = self.lstm_generator.generate_features(train_data)
+
+        return lstm_features
+
+    def add_lstm_features(self, df, lstm_features):
+        """Add LSTM features to the main dataframe"""
+        if lstm_features is None:
+            return df
+
+        # Merge LSTM features
+        lstm_cols = ['LSTM_Return_5D', 'LSTM_Return_10D', 'LSTM_Direction_Prob']
+
+        for col in lstm_cols:
+            if col in lstm_features.columns:
+                df[col] = lstm_features[col].values[:len(df)]
+
+        # Add to feature list
+        new_features = [c for c in lstm_cols if c in df.columns]
+        self.feature_cols = list(self.feature_cols) + new_features
+
+        print(f"\n  Added {len(new_features)} LSTM features")
+        print(f"  Total features: {len(self.feature_cols)}")
+
+        return df
 
     def prepare_data(self, df, test_size=0.2):
         """Prepare train/test split with proper time ordering"""
@@ -419,10 +503,16 @@ class UltimateTrainer:
             'feature_cols': self.feature_cols,
             'model_type': type(self.model).__name__,
             'best_params': self.best_params,
-            'tickers': self.tickers
+            'tickers': self.tickers,
+            'has_lstm': self.lstm_generator is not None
         }
         joblib.dump(package, filename)
         print(f"\n✓ Model saved to {filename}")
+
+        # Save LSTM model separately
+        if self.lstm_generator is not None:
+            lstm_filename = filename.replace('.pkl', '_lstm.pt')
+            self.lstm_generator.save(lstm_filename)
 
 
 def main():
@@ -438,6 +528,10 @@ def main():
                         help='Use ensemble of all models')
     parser.add_argument('--no-gpu', action='store_true',
                         help='Disable GPU')
+    parser.add_argument('--no-lstm', action='store_true',
+                        help='Disable LSTM features')
+    parser.add_argument('--lstm-epochs', type=int, default=50,
+                        help='LSTM training epochs')
     parser.add_argument('--quick', action='store_true',
                         help='Quick mode: fewer tickers, fewer trials')
     parser.add_argument('--output', type=str, default='csp_model_multi.pkl',
@@ -446,12 +540,13 @@ def main():
     args = parser.parse_args()
 
     print("="*70)
-    print("🚀 ULTIMATE MODEL TRAINING")
+    print("🚀 ULTIMATE MODEL TRAINING (with LSTM)")
     print("="*70)
 
     # Quick mode settings
     if args.quick:
         args.trials = 30
+        args.lstm_epochs = 20
         tickers = ['NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN']
     else:
         tickers = args.tickers
@@ -460,12 +555,19 @@ def main():
     print(f"  Trials per model: {args.trials}")
     print(f"  Ensemble: {args.ensemble}")
     print(f"  Period: {args.period}")
+    print(f"  LSTM: {'Disabled' if args.no_lstm else f'Enabled ({args.lstm_epochs} epochs)'}")
 
     # Initialize
-    trainer = UltimateTrainer(tickers=tickers, use_gpu=not args.no_gpu)
+    trainer = UltimateTrainer(tickers=tickers, use_gpu=not args.no_gpu, use_lstm=not args.no_lstm)
 
     # Collect data
     df = trainer.collect_data(period=args.period)
+
+    # Train LSTM and generate features
+    lstm_features = trainer.train_lstm_features(epochs=args.lstm_epochs)
+
+    # Add LSTM features to training data
+    df = trainer.add_lstm_features(df, lstm_features)
 
     # Prepare data
     X_train, X_test, y_train, y_test = trainer.prepare_data(df)
