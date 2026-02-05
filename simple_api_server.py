@@ -68,6 +68,7 @@ class PredictionResponse(BaseModel):
     options_by_expiration: Optional[dict] = None  # Options grouped by monthly expiration
     available_expirations: Optional[list] = None  # List of available monthly expirations
     data_source: Optional[dict] = None  # Shows where data came from (Schwab vs Yahoo)
+    market_status: Optional[dict] = None  # Market open/closed status from Schwab
 
 
 class MultiTickerRequest(BaseModel):
@@ -346,13 +347,31 @@ def predict(request: PredictionRequest):
                 option['model_prob_assignment'] = round(model_risk_at_strike, 3)
                 option['edge'] = round(edge, 2)
                 option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
-                option['is_closest_atm'] = False
+                option['is_suggested'] = False
 
+                # Calculate Sharpe ratio: ROR / risk (model probability)
+                # Higher Sharpe = better risk-adjusted return
+                ror = option.get('ror', 0)
+                if model_risk_at_strike > 0 and ror > 0:
+                    option['sharpe'] = round(ror / (model_risk_at_strike * 100), 3)
+                else:
+                    option['sharpe'] = 0
+
+            # Select best option by Edge (only if positive edge exists)
             if all_options:
-                all_options[0]['is_closest_atm'] = True
-
-            # Get the best one for backward compatibility
-            options_data = all_options[0] if all_options else None
+                # Find option with best positive edge
+                positive_edge_options = [opt for opt in all_options if opt.get('edge', 0) > 0]
+                if positive_edge_options:
+                    best_edge_option = max(positive_edge_options, key=lambda x: x.get('edge', 0))
+                    best_edge_option['is_suggested'] = True
+                    options_data = best_edge_option
+                    print(f"Best Edge: ${best_edge_option['strike']} strike, Edge={best_edge_option['edge']:.1f}")
+                else:
+                    # No positive edge - don't suggest any option
+                    options_data = None
+                    print("No positive edge options found - no suggestion")
+            else:
+                options_data = None
             print(f"Options data prepared: {len(all_options)} total, returning top 5")
         except Exception as e:
             print(f"ERROR fetching options data: {e}")
@@ -429,6 +448,22 @@ def predict(request: PredictionRequest):
                 if exp in options_by_expiration
             }
 
+        # Check market status if no options data available
+        market_status = None
+        if not all_options and SCHWAB_AVAILABLE:
+            try:
+                equity_open = is_market_open('equity')
+                option_open = is_market_open('option')
+                market_status = {
+                    "equity_open": equity_open,
+                    "option_open": option_open,
+                    "message": "Market is OPEN" if option_open else "Market is CLOSED"
+                }
+                print(f"Market status: equity={equity_open}, options={option_open}")
+            except Exception as e:
+                print(f"Could not check market status: {e}")
+                market_status = {"message": "Could not determine market status"}
+
         return PredictionResponse(
             ticker=ticker,
             prediction="GOOD TIME TO SELL CSP" if prediction == 1 else "WAIT - NOT OPTIMAL",
@@ -447,7 +482,8 @@ def predict(request: PredictionRequest):
                 "price": price_source,
                 "options": options_source,
                 "greeks": "Schwab API" if options_source == "Schwab" else "Black-Scholes (calculated)"
-            }
+            },
+            market_status=market_status
         )
 
     except Exception as e:

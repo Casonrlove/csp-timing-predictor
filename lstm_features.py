@@ -186,8 +186,10 @@ class LSTMFeatureGenerator:
                 optimizer.step()
                 total_loss += loss.item()
 
-                # Free GPU memory
-                del batch_X, batch_y
+                # Free GPU memory aggressively
+                del batch_X, batch_y, outputs, loss
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
 
             avg_loss = total_loss / len(loader)
             scheduler.step(avg_loss)
@@ -212,7 +214,7 @@ class LSTMFeatureGenerator:
 
         return self
 
-    def generate_features(self, df):
+    def generate_features(self, df, batch_size=64):
         """Generate LSTM predictions as features for the main model"""
         if self.model is None:
             raise ValueError("Model not trained. Call fit() first.")
@@ -225,11 +227,20 @@ class LSTMFeatureGenerator:
         # Prepare sequences
         X = self._prepare_sequences(df_scaled, self.feature_cols)
 
-        # Predict
+        # Predict in batches to avoid OOM
         self.model.eval()
+        all_predictions = []
+
         with torch.no_grad():
-            X_tensor = torch.FloatTensor(X).to(self.device)
-            predictions = self.model(X_tensor).cpu().numpy()
+            for i in range(0, len(X), batch_size):
+                batch = torch.FloatTensor(X[i:i + batch_size]).to(self.device)
+                batch_pred = self.model(batch).cpu().numpy()
+                all_predictions.append(batch_pred)
+                del batch  # Free GPU memory
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
+
+        predictions = np.concatenate(all_predictions, axis=0)
 
         # Create feature dataframe
         # Pad the beginning with NaN (no predictions for first sequence_length rows)

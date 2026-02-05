@@ -177,10 +177,10 @@ class UltimateTrainer:
         available_features = [f for f in lstm_input_features if f in self.raw_data.columns]
         print(f"  LSTM input features: {len(available_features)}")
 
-        # Train LSTM on raw data
+        # Train LSTM on raw data (smaller model for memory efficiency)
         self.lstm_generator = LSTMFeatureGenerator(
             sequence_length=20,
-            hidden_size=128,
+            hidden_size=64,  # Reduced from 128
             num_layers=2
         )
 
@@ -191,7 +191,7 @@ class UltimateTrainer:
             train_data,
             available_features,
             epochs=epochs,
-            batch_size=256,  # Larger batches OK now that data stays on CPU
+            batch_size=64,  # Smaller batches for memory
             verbose=True
         )
 

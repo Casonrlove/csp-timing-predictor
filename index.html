@@ -525,7 +525,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.6.0</div>
+            <div class="version">v1.7.1</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -848,7 +848,10 @@
                         </div>
                         <div class="info-box">
                             <div class="info-label">Model</div>
-                            <div class="info-value">${data.model_type}</div>
+                            <div class="info-value" style="font-size: 0.75rem; line-height: 1.3;">
+                                LSTM → XGBoost + LightGBM + RF<br>
+                                <span style="color: #8b949e;">→ Stacking (LogReg)</span>
+                            </div>
                         </div>
                     </div>
 
@@ -963,6 +966,10 @@
                                     <span><strong>Annual ROR:</strong></span>
                                     <span><strong style="color: #3fb950;">${data.options_data.annualized_ror.toFixed(1)}%</strong></span>
                                 </div>
+                                <div class="technical-item" style="background: rgba(210, 153, 34, 0.2); border-color: #d29922;">
+                                    <span><strong>Sharpe:</strong></span>
+                                    <span><strong style="color: #d29922;">${data.options_data.sharpe ? data.options_data.sharpe.toFixed(2) : '-'}</strong></span>
+                                </div>
                                 <div class="technical-item">
                                     <span>Theta/Day:</span>
                                     <span>${data.options_data.theta_efficiency.toFixed(3)}%</span>
@@ -1021,6 +1028,7 @@
                                 <em>Note: Options data only available during market hours (9:30 AM - 4:00 PM ET)</em>
                             </div>
                         </div>
+                        ` : ''}
 
                         ${data.options_by_expiration && data.available_expirations && data.available_expirations.length > 0 ? `
                         <div style="margin-top: 20px; background: rgba(22, 27, 34, 0.8); padding: 15px; border-radius: 8px; border: 1px solid #30363d;">
@@ -1062,7 +1070,9 @@
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Ask</th>
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Delta</th>
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Model</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Edge</th>
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">ROR</th>
+                                                    <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Sharpe</th>
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Theta</th>
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Vol</th>
                                                     <th style="padding: 4px 5px; text-align: right; color: #8b949e;">Gamma</th>
@@ -1074,13 +1084,15 @@
                                             </thead>
                                             <tbody>
                                                 ${expData.options.map(opt => `
-                                                    <tr style="border-bottom: 1px solid #30363d; ${opt.edge > 2 ? 'background: rgba(63, 185, 80, 0.1);' : opt.edge < -2 ? 'background: rgba(248, 81, 73, 0.1);' : ''}">
-                                                        <td style="padding: 4px 5px;"><strong>$${opt.strike.toFixed(0)}</strong></td>
+                                                    <tr style="border-bottom: 1px solid #30363d; ${opt.is_suggested ? 'background: rgba(110, 64, 201, 0.25); border-left: 3px solid #6e40c9;' : opt.edge > 2 ? 'background: rgba(63, 185, 80, 0.1);' : opt.edge < -2 ? 'background: rgba(248, 81, 73, 0.1);' : ''}">
+                                                        <td style="padding: 4px 5px;"><strong>$${opt.strike.toFixed(0)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.bid.toFixed(2)}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.ask.toFixed(2)}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.delta.toFixed(2)}</td>
                                                         <td style="padding: 4px 5px; text-align: right; color: #58a6ff;">${opt.model_prob_assignment.toFixed(2)}</td>
+                                                        <td style="padding: 4px 5px; text-align: right; font-weight: bold; color: ${opt.edge > 0 ? '#3fb950' : '#f85149'};">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.ror.toFixed(1)}%</td>
+                                                        <td style="padding: 4px 5px; text-align: right; color: #d29922; font-weight: ${opt.is_suggested ? 'bold' : 'normal'};">${opt.sharpe ? opt.sharpe.toFixed(2) : '-'}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.theta.toFixed(2)}</td>
                                                         <td style="padding: 4px 5px; text-align: right; color: #8b949e;">${opt.volume.toLocaleString()}</td>
                                                         <td style="padding: 4px 5px; text-align: right;">${opt.gamma.toFixed(3)}</td>
@@ -1098,13 +1110,19 @@
                             }).join('')}
 
                             <div style="margin-top: 10px; font-size: 0.75rem; color: #8b949e;">
-                                <em>💡 Edge = Market Delta - Model Risk. Positive = market overpricing risk (favorable for selling).</em>
+                                <em>⭐ Best edge (positive only) | Edge = Market Delta - Model Risk</em>
                             </div>
                         </div>
-                        ` : ''}
                         ` : `
-                        <div style="margin-top: 15px; padding: 10px; background: #21262d; border: 1px solid #30363d; border-radius: 8px; font-size: 0.9rem; color: #8b949e;">
-                            📊 Options data unavailable (market closed or no suitable options found)
+                        <div style="margin-top: 15px; padding: 15px; background: #21262d; border: 1px solid #30363d; border-radius: 8px; font-size: 0.9rem; color: #8b949e;">
+                            ${data.market_status ? `
+                                ${data.market_status.option_open ?
+                                    `<div style="color: #f85149;">⚠️ <strong>Market is OPEN</strong> but no options data returned. Check Schwab API connection.</div>` :
+                                    `<div>🔒 <strong>Market is CLOSED</strong> - Options data unavailable until market hours (9:30 AM - 4:00 PM ET)</div>`
+                                }
+                            ` : `
+                                <div>📊 Options data unavailable (market closed or no suitable options found)</div>
+                            `}
                         </div>
                         `}
                     </div>
