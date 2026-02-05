@@ -1695,43 +1695,60 @@
         function displayMultiResults(results) {
             const resultDiv = document.getElementById('multiResults');
 
-            const html = `
-                <div class="multi-results">
-                    ${results.map(data => {
-                        if (data.error) {
-                            return `
-                                <div class="result wait">
-                                    <div class="ticker-name">${data.ticker}</div>
-                                    <p>Error: ${data.error}</p>
-                                </div>
-                            `;
-                        }
+            // Build table rows for each ticker
+            const rows = results.map(data => {
+                if (data.error) {
+                    return `<tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 8px; color: var(--text-strike);"><strong>${data.ticker}</strong></td>
+                        <td colspan="5" style="padding: 8px; color: var(--negative-red);">Error: ${data.error}</td>
+                    </tr>`;
+                }
 
-                        const isGood = data.prediction.includes('GOOD');
-                        return `
-                            <div class="result ${isGood ? 'good' : 'wait'}">
-                                <div class="result-header">
-                                    <div class="ticker-name">${data.ticker}</div>
-                                    <div class="prediction">${data.prediction}</div>
-                                </div>
-                                <div class="confidence-bar">
-                                    <div class="confidence-fill" style="width: ${data.confidence * 100}%">
-                                        ${(data.confidence * 100).toFixed(1)}%
-                                    </div>
-                                </div>
-                                <div class="price-info">
-                                    <div class="info-box">
-                                        <div class="info-label">Price</div>
-                                        <div class="info-value">$${data.current_price.toFixed(2)}</div>
-                                    </div>
-                                    <div class="info-box">
-                                        <div class="info-label">Good Prob</div>
-                                        <div class="info-value">${(data.prob_good * 100).toFixed(1)}%</div>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    }).join('')}
+                // Find options in 0.20-0.30 delta range from first expiration
+                let bestOption = null;
+                if (data.options_by_expiration && data.available_expirations && data.available_expirations.length > 0) {
+                    const firstExp = data.available_expirations[0];
+                    const options = data.options_by_expiration[firstExp]?.options || [];
+                    // Find option closest to 0.25 delta
+                    bestOption = options.reduce((best, opt) => {
+                        const delta = Math.abs(opt.delta);
+                        if (delta >= 0.20 && delta <= 0.30) {
+                            if (!best || Math.abs(delta - 0.25) < Math.abs(Math.abs(best.delta) - 0.25)) {
+                                return opt;
+                            }
+                        }
+                        return best;
+                    }, null);
+                }
+
+                return `<tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-otm);">
+                    <td style="padding: 8px; color: var(--text-strike);"><strong>${data.ticker}</strong></td>
+                    <td style="padding: 8px; text-align: right; color: #C0C0C0;">$${data.current_price.toFixed(2)}</td>
+                    <td style="padding: 8px; text-align: right; color: var(--text-strike);">${bestOption ? '$' + bestOption.strike.toFixed(2) : '-'}</td>
+                    <td style="padding: 8px; text-align: right; color: #C0C0C0;">${bestOption ? Math.abs(bestOption.delta).toFixed(2) : '-'}</td>
+                    <td style="padding: 8px; text-align: right; color: var(--positive-green);">${bestOption ? bestOption.ror.toFixed(2) + '%' : '-'}</td>
+                    <td style="padding: 8px; text-align: right; color: #C0C0C0;">${bestOption ? bestOption.theta_efficiency.toFixed(3) + '%' : '-'}</td>
+                </tr>`;
+            }).join('');
+
+            const html = `
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 15px;">
+                    <thead>
+                        <tr style="background: var(--bg-row-alt);">
+                            <th style="padding: 8px; text-align: left; color: var(--text-secondary);">Ticker</th>
+                            <th style="padding: 8px; text-align: right; color: var(--text-secondary);">Price</th>
+                            <th style="padding: 8px; text-align: right; color: var(--text-secondary);">Strike (.20-.30δ)</th>
+                            <th style="padding: 8px; text-align: right; color: var(--text-secondary);">Delta</th>
+                            <th style="padding: 8px; text-align: right; color: var(--text-secondary);">ROR</th>
+                            <th style="padding: 8px; text-align: right; color: var(--text-secondary);">θ Eff</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+                <div style="margin-top: 10px; font-size: 0.75rem; color: var(--text-secondary);">
+                    <em>Showing nearest monthly expiration, strike closest to 0.25 delta</em>
                 </div>
             `;
 
