@@ -29,15 +29,23 @@ sleep 1
 
 echo "Starting CSP Timing API Server..."
 nohup python simple_api_server.py --port 8000 --reload > server.log 2>&1 &
-sleep 5
 
-# Check if server started
-if curl -s http://localhost:8000/ > /dev/null; then
-    echo "✓ API Server running on http://localhost:8000"
-else
-    echo "✗ API Server failed to start. Check server.log"
-    exit 1
-fi
+# Wait for server to start (up to 30 seconds)
+echo -n "Waiting for server"
+for i in {1..30}; do
+    if curl -s http://localhost:8000/ > /dev/null 2>&1; then
+        echo ""
+        echo "✓ API Server running on http://localhost:8000"
+        break
+    fi
+    echo -n "."
+    sleep 1
+    if [ $i -eq 30 ]; then
+        echo ""
+        echo "✗ API Server failed to start. Check server.log"
+        exit 1
+    fi
+done
 
 # Start ngrok if --all flag provided
 if [ "$1" == "--all" ]; then
