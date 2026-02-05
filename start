@@ -29,7 +29,7 @@ sleep 1
 
 echo "Starting CSP Timing API Server..."
 nohup python simple_api_server.py --port 8000 --reload > server.log 2>&1 &
-sleep 3
+sleep 5
 
 # Check if server started
 if curl -s http://localhost:8000/ > /dev/null; then
