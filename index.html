@@ -525,7 +525,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.8.0</div>
+            <div class="version">v1.9.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -779,7 +779,8 @@
                                     edge: data.options_data.edge,
                                     ror: data.options_data.ror,
                                     premium: data.options_data.premium,
-                                    prob_good: data.prob_good,
+                                    csp_score: data.csp_score,
+                                    p_safe: data.p_safe,
                                     current_price: data.current_price
                                 });
                             }
@@ -815,8 +816,8 @@
                                     <th style="padding: 8px; text-align: right; color: #8b949e;">Delta</th>
                                     <th style="padding: 8px; text-align: right; color: #8b949e;">Edge</th>
                                     <th style="padding: 8px; text-align: right; color: #8b949e;">ROR</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Premium</th>
-                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Model</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">CSP Score</th>
+                                    <th style="padding: 8px; text-align: right; color: #8b949e;">P(Safe)</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -833,14 +834,14 @@
                                         <td style="padding: 8px; text-align: right;">${opp.delta.toFixed(2)}</td>
                                         <td style="padding: 8px; text-align: right; color: #3fb950; font-weight: bold;">+${opp.edge.toFixed(1)}</td>
                                         <td style="padding: 8px; text-align: right; color: #3fb950;">${opp.ror.toFixed(1)}%</td>
-                                        <td style="padding: 8px; text-align: right;">$${opp.premium.toFixed(2)}</td>
-                                        <td style="padding: 8px; text-align: right;">${(opp.prob_good * 100).toFixed(0)}%</td>
+                                        <td style="padding: 8px; text-align: right; font-weight: bold; color: ${opp.csp_score > 0.3 ? '#3fb950' : '#d29922'};">${opp.csp_score > 0 ? '+' : ''}${(opp.csp_score * 100).toFixed(0)}</td>
+                                        <td style="padding: 8px; text-align: right;">${(opp.p_safe * 100).toFixed(0)}%</td>
                                     </tr>
                                 `).join('')}
                             </tbody>
                         </table>
                         <div style="margin-top: 10px; font-size: 0.75rem; color: #8b949e;">
-                            <em>Click ticker to view full details. Showing top ${Math.min(10, opportunities.length)} by edge.</em>
+                            <em>Click ticker to view full details. Sorted by edge. CSP Score = P(Safe) - P(Downside)</em>
                         </div>
                     `;
                 }
@@ -942,9 +943,30 @@
                         <div class="prediction">${data.prediction}</div>
                     </div>
 
-                    <div class="confidence-bar">
-                        <div class="confidence-fill" style="width: ${data.confidence * 100}%">
-                            ${(data.confidence * 100).toFixed(1)}% Confidence
+                    <!-- CSP Score Bar - the key metric -->
+                    <div style="margin: 15px 0; padding: 15px; background: ${data.csp_score > 0.3 ? 'rgba(63, 185, 80, 0.15)' : data.csp_score > 0 ? 'rgba(210, 153, 34, 0.15)' : 'rgba(248, 81, 73, 0.15)'}; border: 2px solid ${data.csp_score > 0.3 ? '#3fb950' : data.csp_score > 0 ? '#d29922' : '#f85149'}; border-radius: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-size: 0.85rem; color: #8b949e;">CSP Score</div>
+                                <div style="font-size: 1.8rem; font-weight: bold; color: ${data.csp_score > 0.3 ? '#3fb950' : data.csp_score > 0 ? '#d29922' : '#f85149'};">
+                                    ${data.csp_score > 0 ? '+' : ''}${(data.csp_score * 100).toFixed(0)}
+                                </div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 0.85rem; color: #8b949e;">Model Decisiveness</div>
+                                <div style="font-size: 1.2rem; color: #e6edf3;">${(data.confidence * 100).toFixed(0)}%</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="color: #3fb950;">P(Safe): ${(data.p_safe * 100).toFixed(0)}%</div>
+                                <div style="color: #f85149;">P(Down): ${(data.p_downside * 100).toFixed(0)}%</div>
+                            </div>
+                        </div>
+                        <div style="margin-top: 10px; font-size: 0.8rem; color: #8b949e;">
+                            ${data.csp_score > 0.5 ? '🟢 Strong opportunity - model highly favors safe outcome' :
+                              data.csp_score > 0.3 ? '🟢 Good opportunity - model favors safe outcome' :
+                              data.csp_score > 0 ? '🟡 Marginal - model slightly favors safe, proceed with caution' :
+                              data.csp_score > -0.3 ? '🟠 Risky - model slightly favors downside' :
+                              '🔴 Avoid - model strongly favors downside risk'}
                         </div>
                     </div>
 
@@ -963,10 +985,6 @@
                         <div class="info-box">
                             <div class="info-label">Current Price</div>
                             <div class="info-value">$${data.current_price.toFixed(2)}</div>
-                        </div>
-                        <div class="info-box">
-                            <div class="info-label">Good Probability</div>
-                            <div class="info-value">${(data.prob_good * 100).toFixed(1)}%</div>
                         </div>
                         <div class="info-box">
                             <div class="info-label">Date</div>

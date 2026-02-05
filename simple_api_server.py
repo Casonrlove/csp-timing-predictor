@@ -56,7 +56,11 @@ class PredictionRequest(BaseModel):
 class PredictionResponse(BaseModel):
     ticker: str
     prediction: str
-    confidence: float
+    confidence: float  # |p_safe - p_downside| - model decisiveness (0=unsure, 1=decisive)
+    p_safe: float  # Probability stock won't drop >5% (good for CSP)
+    p_downside: float  # Probability of >5% drop (bad for CSP)
+    csp_score: float  # p_safe - p_downside (-1 to +1, higher = better trade)
+    # Legacy fields for backward compatibility
     prob_good: float
     prob_bad: float
     current_price: float
@@ -464,12 +468,22 @@ def predict(request: PredictionRequest):
                 print(f"Could not check market status: {e}")
                 market_status = {"message": "Could not determine market status"}
 
+        # Calculate improved metrics
+        p_safe = float(probabilities[1])  # Probability of no major drop
+        p_downside = float(probabilities[0])  # Probability of >5% drop
+        csp_score = p_safe - p_downside  # -1 to +1, higher = better CSP opportunity
+        confidence = abs(p_safe - p_downside)  # Model decisiveness (0=unsure, 1=decisive)
+
         return PredictionResponse(
             ticker=ticker,
             prediction="GOOD TIME TO SELL CSP" if prediction == 1 else "WAIT - NOT OPTIMAL",
-            confidence=float(max(probabilities)),
-            prob_good=float(probabilities[1]),
-            prob_bad=float(probabilities[0]),
+            confidence=confidence,
+            p_safe=p_safe,
+            p_downside=p_downside,
+            csp_score=csp_score,
+            # Legacy fields
+            prob_good=p_safe,
+            prob_bad=p_downside,
             current_price=current_price,
             date=datetime.now().strftime('%Y-%m-%d'),
             model_type=f"{type(MODEL).__name__} (Multi-Ticker)" if "multi" in MODEL_PATH else type(MODEL).__name__,
