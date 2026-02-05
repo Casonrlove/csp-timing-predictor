@@ -65,6 +65,8 @@ class PredictionResponse(BaseModel):
     technical_context: dict
     options_data: Optional[dict] = None
     all_options: Optional[list] = None
+    options_by_expiration: Optional[dict] = None  # Options grouped by monthly expiration
+    available_expirations: Optional[list] = None  # List of available monthly expirations
     data_source: Optional[dict] = None  # Shows where data came from (Schwab vs Yahoo)
 
 
@@ -387,23 +389,45 @@ def predict(request: PredictionRequest):
             }
         }
 
-        # Pick ONE expiration (closest to 37 DTE) and show all strikes sorted high→low
+        # Group options by monthly expiration and return next 2 monthlies
+        options_by_expiration = {}
+        available_expirations = []
         display_options = []
+
         if all_options:
             # Group options by expiration
-            expirations = {}
             for opt in all_options:
                 exp = opt['expiration']
-                if exp not in expirations:
-                    expirations[exp] = {'dte': opt['dte'], 'options': []}
-                expirations[exp]['options'].append(opt)
+                if exp not in options_by_expiration:
+                    options_by_expiration[exp] = {
+                        'dte': opt['dte'],
+                        'expiration': exp,
+                        'options': []
+                    }
+                options_by_expiration[exp]['options'].append(opt)
 
-            # Pick the expiration closest to 37 DTE (sweet spot for CSPs)
-            best_exp = min(expirations.keys(), key=lambda x: abs(expirations[x]['dte'] - 37))
+            # Sort expirations by date and take next 2
+            sorted_exps = sorted(options_by_expiration.keys())
+            available_expirations = sorted_exps[:2]  # Next 2 monthly expirations
 
-            # Get all strikes for that expiration, sorted by strike (high to low = high delta to low)
-            display_options = sorted(expirations[best_exp]['options'],
-                                    key=lambda x: -x['strike'])[:8]
+            # Sort strikes within each expiration (high to low = high delta to low)
+            for exp in options_by_expiration:
+                options_by_expiration[exp]['options'] = sorted(
+                    options_by_expiration[exp]['options'],
+                    key=lambda x: -x['strike']
+                )
+
+            # For backward compatibility, use first expiration as default display
+            if available_expirations:
+                first_exp = available_expirations[0]
+                display_options = options_by_expiration[first_exp]['options']
+
+            # Only include the 2 monthly expirations in the response
+            options_by_expiration = {
+                exp: options_by_expiration[exp]
+                for exp in available_expirations
+                if exp in options_by_expiration
+            }
 
         return PredictionResponse(
             ticker=ticker,
@@ -417,6 +441,8 @@ def predict(request: PredictionRequest):
             technical_context=technical_context,
             options_data=options_data,
             all_options=display_options if display_options else None,
+            options_by_expiration=options_by_expiration if options_by_expiration else None,
+            available_expirations=available_expirations if available_expirations else None,
             data_source={
                 "price": price_source,
                 "options": options_source,

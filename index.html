@@ -525,7 +525,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">v1.5.0</div>
+            <div class="version">v1.6.0</div>
             <h1>💰 CSP Timing Predictor</h1>
             <p>AI-powered predictions for optimal Cash Secured Put timing</p>
         </div>
@@ -699,6 +699,35 @@
             document.getElementById('ticker').value = ticker;
         }
 
+        // Store current data for expiration switching
+        let currentPredictionData = null;
+
+        function switchExpiration(ticker, selectedExp) {
+            if (!currentPredictionData || !currentPredictionData.available_expirations) return;
+
+            const expirations = currentPredictionData.available_expirations;
+
+            // Update button styles
+            expirations.forEach(exp => {
+                const btn = document.getElementById(`expBtn_${ticker}_${exp.replace(/-/g, '')}`);
+                const table = document.getElementById(`optionsTable_${ticker}_${exp.replace(/-/g, '')}`);
+
+                if (btn && table) {
+                    if (exp === selectedExp) {
+                        btn.style.border = '2px solid #58a6ff';
+                        btn.style.background = 'rgba(88, 166, 255, 0.2)';
+                        btn.style.color = '#58a6ff';
+                        table.style.display = 'block';
+                    } else {
+                        btn.style.border = '2px solid #30363d';
+                        btn.style.background = '#21262d';
+                        btn.style.color = '#8b949e';
+                        table.style.display = 'none';
+                    }
+                }
+            });
+        }
+
         function getApiUrl() {
             const url = document.getElementById('apiUrl').value.trim();
             if (!url) {
@@ -746,6 +775,9 @@
         function displaySingleResult(data) {
             const resultDiv = document.getElementById('singleResult');
             const isGood = data.prediction.includes('GOOD');
+
+            // Store data for expiration switching
+            currentPredictionData = data;
 
             const html = `
                 <div class="result ${isGood ? 'good' : 'wait'}">
@@ -960,43 +992,77 @@
                             </div>
                         </div>
 
-                        ${data.all_options && data.all_options.length > 1 ? `
+                        ${data.options_by_expiration && data.available_expirations && data.available_expirations.length > 0 ? `
                         <div style="margin-top: 20px; background: rgba(22, 27, 34, 0.8); padding: 15px; border-radius: 8px; border: 1px solid #30363d;">
-                            <h4 style="margin: 0 0 12px 0; color: #58a6ff;">📋 All Available Strikes</h4>
-                            <div style="overflow-x: auto;">
-                                <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
-                                    <thead>
-                                        <tr style="background: #21262d;">
-                                            <th style="padding: 8px; text-align: left; color: #8b949e;">Strike</th>
-                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Market<br/>Delta</th>
-                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Model<br/>Risk</th>
-                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Premium</th>
-                                            <th style="padding: 8px; text-align: right; color: #8b949e;">ROR</th>
-                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Annual</th>
-                                            <th style="padding: 8px; text-align: right; color: #8b949e;">DTE</th>
-                                            <th style="padding: 8px; text-align: right; color: #8b949e;">Edge</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${data.all_options.map(opt => `
-                                            <tr style="border-bottom: 1px solid #30363d; ${opt.is_closest_atm ? 'background: rgba(110, 64, 201, 0.15); border-left: 3px solid #6e40c9;' : ''}">
-                                                <td style="padding: 8px;"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_closest_atm ? ' ⭐' : ''}</td>
-                                                <td style="padding: 8px; text-align: right;">${(opt.market_delta * 100).toFixed(1)}%</td>
-                                                <td style="padding: 8px; text-align: right; color: #58a6ff;">${(opt.model_prob_assignment * 100).toFixed(1)}%</td>
-                                                <td style="padding: 8px; text-align: right;">$${opt.premium.toFixed(2)}</td>
-                                                <td style="padding: 8px; text-align: right;">${opt.ror.toFixed(2)}%</td>
-                                                <td style="padding: 8px; text-align: right;">${opt.annualized_ror.toFixed(1)}%</td>
-                                                <td style="padding: 8px; text-align: right;">${opt.dte}d</td>
-                                                <td style="padding: 8px; text-align: right; font-weight: bold; color: ${opt.edge > 0 ? '#3fb950' : '#f85149'};">
-                                                    ${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}pp
-                                                </td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
+                            <h4 style="margin: 0 0 12px 0; color: #58a6ff;">📋 Monthly Options (0.10 - 0.50 Delta)</h4>
+
+                            <!-- Expiration Toggle Buttons -->
+                            <div style="display: flex; gap: 10px; margin-bottom: 15px;" id="expirationToggle_${data.ticker}">
+                                ${data.available_expirations.map((exp, idx) => {
+                                    const expData = data.options_by_expiration[exp];
+                                    const expDate = new Date(exp + 'T00:00:00');
+                                    const monthName = expDate.toLocaleString('default', { month: 'short' });
+                                    const day = expDate.getDate();
+                                    return `
+                                        <button onclick="switchExpiration('${data.ticker}', '${exp}')"
+                                                id="expBtn_${data.ticker}_${exp.replace(/-/g, '')}"
+                                                style="flex: 1; padding: 10px 15px; border: 2px solid ${idx === 0 ? '#58a6ff' : '#30363d'};
+                                                       background: ${idx === 0 ? 'rgba(88, 166, 255, 0.2)' : '#21262d'};
+                                                       color: ${idx === 0 ? '#58a6ff' : '#8b949e'}; border-radius: 8px;
+                                                       cursor: pointer; font-weight: 600; transition: all 0.2s;">
+                                            <div style="font-size: 1rem;">${monthName} ${day}</div>
+                                            <div style="font-size: 0.8rem; opacity: 0.8;">${expData.dte} DTE</div>
+                                        </button>
+                                    `;
+                                }).join('')}
                             </div>
+
+                            <!-- Options Tables for Each Expiration -->
+                            ${data.available_expirations.map((exp, idx) => {
+                                const expData = data.options_by_expiration[exp];
+                                return `
+                                <div id="optionsTable_${data.ticker}_${exp.replace(/-/g, '')}"
+                                     style="display: ${idx === 0 ? 'block' : 'none'};">
+                                    <div style="overflow-x: auto;">
+                                        <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                                            <thead>
+                                                <tr style="background: #21262d;">
+                                                    <th style="padding: 8px; text-align: left; color: #8b949e;">Strike</th>
+                                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Delta</th>
+                                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Model<br/>Risk</th>
+                                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Bid</th>
+                                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Ask</th>
+                                                    <th style="padding: 8px; text-align: right; color: #8b949e;">ROR</th>
+                                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Annual</th>
+                                                    <th style="padding: 8px; text-align: right; color: #8b949e;">Edge</th>
+                                                    <th style="padding: 8px; text-align: right; color: #8b949e;">OI</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                ${expData.options.map(opt => `
+                                                    <tr style="border-bottom: 1px solid #30363d; ${opt.edge > 2 ? 'background: rgba(63, 185, 80, 0.1);' : opt.edge < -2 ? 'background: rgba(248, 81, 73, 0.1);' : ''}">
+                                                        <td style="padding: 8px;"><strong>$${opt.strike.toFixed(0)}</strong></td>
+                                                        <td style="padding: 8px; text-align: right;">${(Math.abs(opt.delta) * 100).toFixed(1)}%</td>
+                                                        <td style="padding: 8px; text-align: right; color: #58a6ff;">${(opt.model_prob_assignment * 100).toFixed(1)}%</td>
+                                                        <td style="padding: 8px; text-align: right;">$${opt.bid.toFixed(2)}</td>
+                                                        <td style="padding: 8px; text-align: right;">$${opt.ask.toFixed(2)}</td>
+                                                        <td style="padding: 8px; text-align: right;">${opt.ror.toFixed(2)}%</td>
+                                                        <td style="padding: 8px; text-align: right;">${opt.annualized_ror.toFixed(0)}%</td>
+                                                        <td style="padding: 8px; text-align: right; font-weight: bold; color: ${opt.edge > 0 ? '#3fb950' : '#f85149'};">
+                                                            ${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}
+                                                        </td>
+                                                        <td style="padding: 8px; text-align: right; color: #8b949e;">${opt.open_interest}</td>
+                                                    </tr>
+                                                `).join('')}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                `;
+                            }).join('')}
+
                             <div style="margin-top: 10px; font-size: 0.75rem; color: #8b949e;">
-                                <em>💡 Edge = Market Delta - Model Risk. Positive edge means market is paying you more than the model says the risk is worth.</em>
+                                <em>💡 Edge = Market Delta - Model Risk. Positive = market overpricing risk (favorable for selling).</em>
                             </div>
                         </div>
                         ` : ''}

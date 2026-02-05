@@ -5,7 +5,54 @@ Handles market data requests including options chains and market hours
 
 import requests
 from datetime import datetime, timedelta
+import calendar
 from schwab_auth import get_valid_access_token, load_config
+
+
+def is_third_friday(date_str):
+    """Check if a date is the 3rd Friday of its month (monthly expiration)"""
+    try:
+        date = datetime.strptime(date_str, '%Y-%m-%d')
+        # Get the first day of the month
+        first_day = date.replace(day=1)
+        # Find the first Friday
+        days_until_friday = (4 - first_day.weekday()) % 7
+        first_friday = first_day + timedelta(days=days_until_friday)
+        # Third Friday is 14 days after first Friday
+        third_friday = first_friday + timedelta(days=14)
+        return date.date() == third_friday.date()
+    except:
+        return False
+
+
+def get_next_monthly_expirations(num_months=3, min_dte=15):
+    """Get the next N monthly expiration dates (3rd Fridays) with minimum DTE"""
+    today = datetime.now()
+    expirations = []
+
+    # Start from current month and look ahead
+    current = today.replace(day=1)
+
+    while len(expirations) < num_months:
+        # Find 3rd Friday of this month
+        first_day = current
+        days_until_friday = (4 - first_day.weekday()) % 7
+        first_friday = first_day + timedelta(days=days_until_friday)
+        third_friday = first_friday + timedelta(days=14)
+
+        # Calculate DTE
+        dte = (third_friday - today).days
+
+        if dte > min_dte:
+            expirations.append(third_friday.strftime('%Y-%m-%d'))
+
+        # Move to next month
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+
+    return expirations
 
 # API Base URL
 API_BASE = "https://api.schwabapi.com/marketdata/v1"
@@ -144,7 +191,7 @@ def get_movers(index='$SPX', sort='PERCENT_CHANGE_UP', frequency=0):
 
 def get_option_chain(symbol, contract_type='PUT', strike_count=20,
                      from_date=None, to_date=None,
-                     min_dte=30, max_dte=45):
+                     min_dte=15, max_dte=90):
     """
     Get option chain with Greeks from Schwab API
 
@@ -154,8 +201,8 @@ def get_option_chain(symbol, contract_type='PUT', strike_count=20,
         strike_count: Number of strikes above/below ATM
         from_date: Start date for expirations (YYYY-MM-DD)
         to_date: End date for expirations (YYYY-MM-DD)
-        min_dte: Minimum days to expiration
-        max_dte: Maximum days to expiration
+        min_dte: Minimum days to expiration (default 15)
+        max_dte: Maximum days to expiration (default 90 to capture 2 monthlies)
 
     Returns:
         Option chain data including Greeks (delta, gamma, theta, vega)
@@ -244,7 +291,7 @@ def is_market_open(market='equity'):
         return False
 
 
-def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.40):
+def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.50, monthlies_only=True, min_dte=15):
     """
     Parse Schwab option chain response into our CSP format
 
@@ -252,6 +299,8 @@ def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.40):
         chain_data: Raw response from get_option_chain()
         min_delta: Minimum delta (absolute value)
         max_delta: Maximum delta (absolute value)
+        monthlies_only: If True, only include monthly expirations (3rd Fridays)
+        min_dte: Minimum days to expiration
 
     Returns:
         List of options formatted for our CSP analyzer
@@ -272,6 +321,14 @@ def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.40):
         expiration = parts[0]
         dte = int(parts[1]) if len(parts) > 1 else 0
 
+        # Filter by minimum DTE
+        if dte < min_dte:
+            continue
+
+        # Filter for monthlies only (3rd Friday of the month)
+        if monthlies_only and not is_third_friday(expiration):
+            continue
+
         for strike_price, option_list in strikes.items():
             strike = float(strike_price)
 
@@ -280,7 +337,7 @@ def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.40):
                 delta = opt.get('delta', 0)
                 delta_abs = abs(delta)
 
-                # Filter by delta range
+                # Filter by delta range (0.1 to 0.5)
                 if delta_abs < min_delta or delta_abs > max_delta:
                     continue
 
@@ -331,48 +388,63 @@ def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.40):
                     'theta_efficiency': round(theta_efficiency, 4),
                     'moneyness': round(moneyness, 4),
                     'model_used': 'Schwab',
-                    'underlying_price': underlying_price
+                    'underlying_price': underlying_price,
+                    'is_monthly': is_third_friday(expiration)
                 })
 
-    # Sort by distance from ideal (30 delta, 37 DTE)
-    for opt in options:
-        delta_score = abs(abs(opt['delta']) - 0.30)
-        dte_score = abs(opt['dte'] - 37.5) / 37.5
-        opt['score'] = delta_score + dte_score * 0.5
-
-    options.sort(key=lambda x: x['score'])
+    # Sort by expiration first, then by strike (high to low)
+    options.sort(key=lambda x: (x['expiration'], -x['strike']))
 
     return options
 
 
-def get_csp_options_schwab(ticker, min_delta=0.10, max_delta=0.40, min_dte=30, max_dte=45):
+def get_csp_options_schwab(ticker, min_delta=0.10, max_delta=0.50, min_dte=15, max_dte=90, monthlies_only=True):
     """
     Get CSP options using Schwab API (replaces Yahoo Finance + Black-Scholes)
 
+    Returns monthly options only (3rd Fridays) with delta between 0.1 and 0.5
+
     Args:
         ticker: Stock symbol
-        min_delta: Minimum delta
-        max_delta: Maximum delta
-        min_dte: Minimum days to expiration
-        max_dte: Maximum days to expiration
+        min_delta: Minimum delta (default 0.10)
+        max_delta: Maximum delta (default 0.50)
+        min_dte: Minimum days to expiration (default 15)
+        max_dte: Maximum days to expiration (default 90 for 2 monthlies)
+        monthlies_only: If True, only return monthly expirations
 
     Returns:
         List of options with Greeks from Schwab
     """
     try:
-        # Fetch option chain from Schwab
+        # Fetch option chain from Schwab with wider date range
         chain = get_option_chain(
             symbol=ticker,
             contract_type='PUT',
-            strike_count=30,
+            strike_count=40,  # More strikes to capture full delta range
             min_dte=min_dte,
             max_dte=max_dte
         )
 
-        # Parse into our format
-        options = parse_option_chain_for_csp(chain, min_delta, max_delta)
+        # Parse into our format (monthlies only by default)
+        options = parse_option_chain_for_csp(
+            chain,
+            min_delta=min_delta,
+            max_delta=max_delta,
+            monthlies_only=monthlies_only,
+            min_dte=min_dte
+        )
 
-        print(f"[Schwab] Found {len(options)} options for {ticker}")
+        # Group by expiration
+        expirations = {}
+        for opt in options:
+            exp = opt['expiration']
+            if exp not in expirations:
+                expirations[exp] = []
+            expirations[exp].append(opt)
+
+        exp_count = len(expirations)
+        print(f"[Schwab] Found {len(options)} options for {ticker} across {exp_count} monthly expiration(s)")
+
         return options
 
     except Exception as e:
