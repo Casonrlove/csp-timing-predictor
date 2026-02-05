@@ -45,18 +45,28 @@ except ImportError:
 class UltimateTrainer:
     """Maximum accuracy model training"""
 
-    # Extended ticker list for more training data
+    # Extended ticker list for more training data (~65 tickers)
     EXTENDED_TICKERS = [
         # Tech giants
         'NVDA', 'AMD', 'TSLA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN',
-        # More tech
-        'INTC', 'QCOM', 'AVGO', 'CRM', 'ADBE', 'NFLX', 'PYPL', 'TXN',
+        # Semiconductors
+        'INTC', 'QCOM', 'AVGO', 'TXN', 'MU', 'MRVL', 'LRCX', 'AMAT', 'KLAC', 'SNPS',
+        # Software/Cloud
+        'CRM', 'ADBE', 'NFLX', 'PYPL', 'NOW', 'PANW', 'CRWD', 'SNOW',
         # Financials
-        'JPM', 'BAC', 'GS', 'V', 'MA',
-        # Other sectors
-        'XOM', 'CVX', 'JNJ', 'PFE', 'UNH', 'PLTR', 'COIN',
+        'JPM', 'BAC', 'GS', 'V', 'MA', 'BRK-B', 'C', 'WFC', 'AXP',
+        # Healthcare
+        'UNH', 'JNJ', 'PFE', 'LLY', 'MRK', 'ABBV', 'TMO', 'DHR',
+        # Consumer
+        'COST', 'WMT', 'HD', 'LOW', 'TGT', 'SBUX', 'MCD', 'NKE',
+        # Energy
+        'XOM', 'CVX', 'COP', 'SLB', 'EOG',
+        # Industrials
+        'CAT', 'DE', 'HON', 'UPS', 'RTX', 'LMT', 'GE', 'BA',
+        # High volatility / Speculative
+        'PLTR', 'COIN', 'MSTR', 'RIVN', 'LCID',
         # ETFs
-        'SPY', 'QQQ', 'IWM', 'VOO', 'VTI', 'TQQQ', 'SQQQ', 'SCHD'
+        'SPY', 'QQQ', 'IWM', 'VOO', 'VTI', 'TQQQ', 'SQQQ', 'SCHD', 'XLF', 'XLE', 'XLK', 'SMH', 'SOXX'
     ]
 
     def __init__(self, tickers=None, use_gpu=True, use_lstm=True):
