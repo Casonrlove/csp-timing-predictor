@@ -291,7 +291,7 @@ def is_market_open(market='equity'):
         return False
 
 
-def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.50, monthlies_only=True, min_dte=15):
+def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.60, monthlies_only=True, min_dte=15):
     """
     Parse Schwab option chain response into our CSP format
 
@@ -398,7 +398,7 @@ def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.50, month
     return options
 
 
-def get_csp_options_schwab(ticker, min_delta=0.10, max_delta=0.50, min_dte=15, max_dte=90, monthlies_only=True):
+def get_csp_options_schwab(ticker, min_delta=0.10, max_delta=0.60, min_dte=15, max_dte=90, monthlies_only=True):
     """
     Get CSP options using Schwab API (replaces Yahoo Finance + Black-Scholes)
 
