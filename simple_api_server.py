@@ -122,6 +122,20 @@ if FEATURE_NAMES and any(f in FEATURE_NAMES for f in LSTM_FEATURES):
     else:
         print(f"⚠ LSTM features required but {lstm_path} not found")
 
+# Load strike probability model for accurate edge calculation
+STRIKE_PROB_MODEL = None
+strike_prob_path = 'strike_probability_model.pkl'
+if os.path.exists(strike_prob_path):
+    try:
+        from strike_probability import StrikeProbabilityCalculator
+        STRIKE_PROB_MODEL = StrikeProbabilityCalculator(strike_prob_path)
+        print(f"✓ Strike probability model loaded from {strike_prob_path}")
+    except Exception as e:
+        print(f"⚠ Failed to load strike probability model: {e}")
+        STRIKE_PROB_MODEL = None
+else:
+    print(f"⚠ Strike probability model not found at {strike_prob_path}")
+
 
 @app.get("/")
 def read_root():
@@ -359,49 +373,47 @@ def predict(request: PredictionRequest):
 
             print(f"Found {len(all_options)} options via {options_source}")
 
-            # Add edge calculation with SCALED model risk per strike
-            model_prob_bad = float(probabilities[0])  # Model's prediction (prob of >5% drop)
-            model_threshold_pct = 0.05  # Model threshold is 5% drop
+            # Calculate edge using strike-specific probability model
+            # This directly compares model P(breach) to market delta for each strike
+            use_strike_model = STRIKE_PROB_MODEL is not None and STRIKE_PROB_MODEL.model_loaded
 
-            # Find the strike closest to 5% OTM to calibrate
-            threshold_strike = current_price * (1 - model_threshold_pct)
-            threshold_delta = None
-            for opt in all_options:
-                otm_pct = (current_price - opt['strike']) / current_price
-                if abs(otm_pct - model_threshold_pct) < 0.02:
-                    threshold_delta = abs(opt['delta'])
-                    break
-
-            # Risk factor: how model's view differs from market at threshold
-            # e.g., model=21%, market delta at 5% OTM=16% → factor=1.31 (model more bearish)
-            if threshold_delta and threshold_delta > 0:
-                risk_factor = model_prob_bad / threshold_delta
+            if use_strike_model:
+                print("[Edge] Using strike-specific probability model")
             else:
-                risk_factor = 1.0
+                print("[Edge] Strike model not available, using fallback")
+                # Fallback to old method
+                model_prob_bad = float(probabilities[0])
 
             for option in all_options:
                 market_delta = abs(option['delta'])
+                strike = option['strike']
 
-                # Scale each strike's risk by the factor
-                model_risk_at_strike = market_delta * risk_factor
-                model_risk_at_strike = max(0.01, min(0.60, model_risk_at_strike))
+                # Calculate how far OTM this strike is (as percentage)
+                otm_pct = ((current_price - strike) / current_price) * 100
 
-                # Edge = market - model (positive = good for selling)
-                edge = (market_delta - model_risk_at_strike) * 100
+                if use_strike_model:
+                    # NEW: Use strike-specific probability model
+                    # Model predicts P(stock drops to this strike level)
+                    model_prob = STRIKE_PROB_MODEL.predict_strike_probability(collector.data, otm_pct)
+                    if model_prob is None:
+                        model_prob = market_delta  # Fallback to delta if model fails
+                else:
+                    # FALLBACK: Simple scaling based on 5% threshold prediction
+                    # Less accurate but works without strike model
+                    model_prob_bad = float(probabilities[0])
+                    scale_factor = otm_pct / 5.0  # Scale relative to 5% threshold
+                    model_prob = model_prob_bad * (1 / scale_factor) if scale_factor > 0 else model_prob_bad
+                    model_prob = max(0.01, min(0.99, model_prob))
+
+                # Edge = Market Delta - Model Probability
+                # Positive edge = market overpricing risk = good for selling
+                edge = (market_delta - model_prob) * 100
 
                 option['market_delta'] = round(market_delta, 3)
-                option['model_prob_assignment'] = round(model_risk_at_strike, 3)
+                option['model_prob_assignment'] = round(model_prob, 3)
                 option['edge'] = round(edge, 2)
                 option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
                 option['is_suggested'] = False
-
-                # Calculate Sharpe ratio: ROR / risk (model probability)
-                # Higher Sharpe = better risk-adjusted return
-                ror = option.get('ror', 0)
-                if model_risk_at_strike > 0 and ror > 0:
-                    option['sharpe'] = round(ror / (model_risk_at_strike * 100), 3)
-                else:
-                    option['sharpe'] = 0
 
             # Select best option - require BOTH CSP Score > 0 AND positive edge
             if all_options:
