@@ -92,18 +92,48 @@ SCALER = None
 FEATURE_NAMES = None
 LSTM_GENERATOR = None
 
-for path in ['csp_model_multi.pkl', 'csp_model.pkl']:
-    if os.path.exists(path):
-        MODEL_PATH = path
-        print(f"Loading model from {MODEL_PATH}...")
-        model_data = joblib.load(MODEL_PATH)
-        MODEL = model_data['model']
-        SCALER = model_data['scaler']
-        FEATURE_NAMES = model_data.get('feature_names') or model_data.get('feature_cols')
-        print(f"✓ Model loaded: {MODEL}")
-        break
+# Per-ticker model components
+TIMING_MODELS = None
+TIMING_SCALERS = None
+TIMING_THRESHOLDS = None
+TIMING_GROUP_MAPPING = None
+PER_TICKER_MODE = False
 
-if MODEL is None:
+# Try per-ticker model first (preferred)
+per_ticker_path = 'csp_timing_model_per_ticker.pkl'
+if os.path.exists(per_ticker_path):
+    try:
+        print(f"Loading per-ticker timing model from {per_ticker_path}...")
+        timing_data = joblib.load(per_ticker_path)
+        TIMING_MODELS = timing_data['models']  # Dict of group models
+        TIMING_SCALERS = timing_data['scalers']  # Dict of group scalers
+        TIMING_THRESHOLDS = timing_data['thresholds']
+        TIMING_GROUP_MAPPING = timing_data['group_mapping']
+        FEATURE_NAMES = timing_data['feature_cols']
+        PER_TICKER_MODE = True
+        MODEL_PATH = per_ticker_path
+        print(f"✓ Per-ticker timing models loaded:")
+        for group, model in TIMING_MODELS.items():
+            threshold = TIMING_THRESHOLDS[group]
+            print(f"  {group:15s}: {type(model).__name__}, threshold={threshold:+.1f}%")
+    except Exception as e:
+        print(f"⚠ Failed to load per-ticker model: {e}")
+        PER_TICKER_MODE = False
+
+# Fallback to global model
+if not PER_TICKER_MODE:
+    for path in ['csp_model_multi.pkl', 'csp_model.pkl']:
+        if os.path.exists(path):
+            MODEL_PATH = path
+            print(f"Loading global model from {MODEL_PATH}...")
+            model_data = joblib.load(MODEL_PATH)
+            MODEL = model_data['model']
+            SCALER = model_data['scaler']
+            FEATURE_NAMES = model_data.get('feature_names') or model_data.get('feature_cols')
+            print(f"✓ Global model loaded: {MODEL}")
+            break
+
+if MODEL is None and not PER_TICKER_MODE:
     print("ERROR: No trained model found!")
 
 # Load LSTM model if it exists and features require it
@@ -124,25 +154,61 @@ if FEATURE_NAMES and any(f in FEATURE_NAMES for f in LSTM_FEATURES):
 
 # Load strike probability model for accurate edge calculation
 STRIKE_PROB_MODEL = None
+strike_prob_path_v3 = 'strike_model_v3.pkl'
+strike_prob_path_v2 = 'strike_model_v2.pkl'
 strike_prob_path = 'strike_probability_model.pkl'
-if os.path.exists(strike_prob_path):
+
+# Try V3 model first (two-stage residual, best accuracy)
+if os.path.exists(strike_prob_path_v3):
+    try:
+        from strike_probability import StrikeProbabilityCalculatorV3
+        STRIKE_PROB_MODEL = StrikeProbabilityCalculatorV3(strike_prob_path_v3)
+        STRIKE_PROB_VERSION = 3
+        print("✓ Strike probability model V3 loaded (two-stage residual, ROC-AUC 0.76)")
+    except Exception as e:
+        print(f"⚠ Failed to load V3 model: {e}")
+        STRIKE_PROB_MODEL = None
+        STRIKE_PROB_VERSION = 0
+
+# Fall back to V2 (ticker-specific, trained on option outcomes)
+if STRIKE_PROB_MODEL is None and os.path.exists(strike_prob_path_v2):
+    try:
+        from strike_probability import StrikeProbabilityCalculatorV2
+        STRIKE_PROB_MODEL = StrikeProbabilityCalculatorV2(strike_prob_path_v2)
+        STRIKE_PROB_VERSION = 2
+        print("✓ Strike probability model V2 loaded (ticker-specific)")
+    except Exception as e:
+        print(f"⚠ Failed to load V2 model: {e}")
+        STRIKE_PROB_MODEL = None
+        STRIKE_PROB_VERSION = 0
+
+# Fall back to V1
+if STRIKE_PROB_MODEL is None and os.path.exists(strike_prob_path):
     try:
         from strike_probability import StrikeProbabilityCalculator
         STRIKE_PROB_MODEL = StrikeProbabilityCalculator(strike_prob_path)
-        print(f"✓ Strike probability model loaded from {strike_prob_path}")
+        STRIKE_PROB_VERSION = 1
+        print(f"✓ Strike probability model V1 loaded from {strike_prob_path}")
     except Exception as e:
         print(f"⚠ Failed to load strike probability model: {e}")
         STRIKE_PROB_MODEL = None
-else:
-    print(f"⚠ Strike probability model not found at {strike_prob_path}")
+        STRIKE_PROB_VERSION = 0
+
+if STRIKE_PROB_MODEL is None:
+    STRIKE_PROB_VERSION = 0
+    print(f"⚠ No strike probability model available")
 
 
 @app.get("/")
 def read_root():
     """Health check"""
+    if PER_TICKER_MODE:
+        model_status = f"per-ticker ({', '.join(TIMING_MODELS.keys())})" if TIMING_MODELS else "No model loaded"
+    else:
+        model_status = str(MODEL) if MODEL else "No model loaded"
     return {
         "status": "running",
-        "model": str(MODEL) if MODEL else "No model loaded",
+        "model": model_status,
         "model_file": MODEL_PATH,
         "timestamp": datetime.now().isoformat()
     }
@@ -151,20 +217,59 @@ def read_root():
 @app.get("/health")
 def health_check():
     """Detailed health check"""
-    return {
-        "status": "healthy" if MODEL else "error",
-        "model_loaded": MODEL is not None,
-        "model_file": MODEL_PATH,
-        "feature_count": len(FEATURE_NAMES) if FEATURE_NAMES else 0,
-        "timestamp": datetime.now().isoformat()
-    }
+    if PER_TICKER_MODE:
+        return {
+            "status": "healthy",
+            "model_type": "per_ticker",
+            "model_loaded": True,
+            "model_file": MODEL_PATH,
+            "groups": list(TIMING_MODELS.keys()) if TIMING_MODELS else [],
+            "thresholds": TIMING_THRESHOLDS if TIMING_THRESHOLDS else {},
+            "feature_count": len(FEATURE_NAMES) if FEATURE_NAMES else 0,
+            "timestamp": datetime.now().isoformat()
+        }
+    else:
+        return {
+            "status": "healthy" if MODEL else "error",
+            "model_type": "global",
+            "model_loaded": MODEL is not None,
+            "model_file": MODEL_PATH,
+            "feature_count": len(FEATURE_NAMES) if FEATURE_NAMES else 0,
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @app.post("/reload")
 def reload_model():
     """Reload the model from disk without restarting the server"""
     global MODEL, SCALER, FEATURE_NAMES, MODEL_PATH
+    global TIMING_MODELS, TIMING_SCALERS, TIMING_THRESHOLDS, TIMING_GROUP_MAPPING, PER_TICKER_MODE
 
+    # Try per-ticker model first
+    per_ticker_path = 'csp_timing_model_per_ticker.pkl'
+    if os.path.exists(per_ticker_path):
+        try:
+            print(f"Reloading per-ticker model from {per_ticker_path}...")
+            timing_data = joblib.load(per_ticker_path)
+            TIMING_MODELS = timing_data['models']
+            TIMING_SCALERS = timing_data['scalers']
+            TIMING_THRESHOLDS = timing_data['thresholds']
+            TIMING_GROUP_MAPPING = timing_data['group_mapping']
+            FEATURE_NAMES = timing_data['feature_cols']
+            PER_TICKER_MODE = True
+            MODEL_PATH = per_ticker_path
+            print(f"✓ Per-ticker models reloaded: {list(TIMING_MODELS.keys())}")
+            return {
+                "status": "success",
+                "message": f"Per-ticker models reloaded from {per_ticker_path}",
+                "model_type": "Per-Ticker XGBoost",
+                "groups": list(TIMING_MODELS.keys()),
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            print(f"⚠ Failed to reload per-ticker model: {e}")
+
+    # Fallback to global model
     for path in ['csp_model_multi.pkl', 'csp_model.pkl']:
         if os.path.exists(path):
             MODEL_PATH = path
@@ -173,6 +278,7 @@ def reload_model():
             MODEL = model_data['model']
             SCALER = model_data['scaler']
             FEATURE_NAMES = model_data.get('feature_names') or model_data.get('feature_cols')
+            PER_TICKER_MODE = False
             print(f"✓ Model reloaded: {MODEL}")
             return {
                 "status": "success",
@@ -288,7 +394,7 @@ def market_status():
 @app.post("/predict", response_model=PredictionResponse)
 def predict(request: PredictionRequest):
     """Make CSP timing prediction for a single ticker"""
-    if MODEL is None:
+    if MODEL is None and not PER_TICKER_MODE:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
     try:
@@ -298,7 +404,7 @@ def predict(request: PredictionRequest):
         collector = CSPDataCollector(ticker, period='10y')
         collector.fetch_data()
         collector.calculate_technical_indicators()
-        collector.create_target_variable(forward_days=35, threshold_pct=-5)
+        collector.create_target_variable(forward_days=35, strike_otm_pct=0.05)
 
         # Generate LSTM features if model requires them
         if LSTM_GENERATOR is not None:
@@ -321,11 +427,26 @@ def predict(request: PredictionRequest):
 
         # Get most recent features
         X_current = features_df.iloc[-1:].values
-        X_scaled = SCALER.transform(X_current)
+
+        # Use per-ticker model if available
+        if PER_TICKER_MODE:
+            # Get ticker's group
+            group = TIMING_GROUP_MAPPING.get(ticker, 'tech_growth')  # Default to tech_growth
+            model = TIMING_MODELS[group]
+            scaler = TIMING_SCALERS[group]
+            threshold = TIMING_THRESHOLDS[group]
+            print(f"[Per-Ticker] Using {group} model for {ticker} (threshold: {threshold:+.1f}%)")
+        else:
+            # Use global model
+            model = MODEL
+            scaler = SCALER
+            print(f"[Global] Using global model for {ticker}")
+
+        X_scaled = scaler.transform(X_current)
 
         # Make prediction
-        prediction = MODEL.predict(X_scaled)[0]
-        probabilities = MODEL.predict_proba(X_scaled)[0]
+        prediction = model.predict(X_scaled)[0]
+        probabilities = model.predict_proba(X_scaled)[0]
 
         # Calculate CSP metrics early (needed for trade gating)
         p_safe = float(probabilities[1])
@@ -358,7 +479,7 @@ def predict(request: PredictionRequest):
 
             if SCHWAB_AVAILABLE:
                 try:
-                    all_options = get_csp_options_schwab(ticker, min_delta=request.min_delta, max_delta=request.max_delta, max_dte=200)
+                    all_options = get_csp_options_schwab(ticker, min_delta=request.min_delta, max_delta=request.max_delta, max_dte=100)
                     if all_options:
                         options_source = "Schwab"
                         print(f"[Schwab] Found {len(all_options)} options")
@@ -392,9 +513,15 @@ def predict(request: PredictionRequest):
                 otm_pct = ((current_price - strike) / current_price) * 100
 
                 if use_strike_model:
-                    # NEW: Use strike-specific probability model
-                    # Model predicts P(stock drops to this strike level)
-                    model_prob = STRIKE_PROB_MODEL.predict_strike_probability(collector.data, otm_pct)
+                    # Use strike-specific probability model
+                    # V2 uses ticker for group-specific prediction, V1 just uses features
+                    if STRIKE_PROB_VERSION == 2:
+                        # V2: Use delta directly for prediction (more accurate)
+                        model_prob = STRIKE_PROB_MODEL.predict_for_delta(collector.data, market_delta, ticker)
+                    else:
+                        # V1: Use OTM percentage
+                        model_prob = STRIKE_PROB_MODEL.predict_strike_probability(collector.data, otm_pct)
+
                     if model_prob is None:
                         model_prob = market_delta  # Fallback to delta if model fails
                 else:
@@ -564,6 +691,14 @@ def predict(request: PredictionRequest):
         except Exception as log_err:
             print(f"Failed to log prediction: {log_err}")
 
+        # Determine model type string
+        if PER_TICKER_MODE:
+            model_type = f"{type(model).__name__} (Per-Ticker: {group})"
+        elif "multi" in MODEL_PATH:
+            model_type = f"{type(MODEL).__name__} (Multi-Ticker)"
+        else:
+            model_type = type(MODEL).__name__
+
         return PredictionResponse(
             ticker=ticker,
             prediction="GOOD TIME TO SELL CSP" if prediction == 1 else "WAIT - NOT OPTIMAL",
@@ -576,7 +711,7 @@ def predict(request: PredictionRequest):
             prob_bad=p_downside,
             current_price=current_price,
             date=datetime.now().strftime('%Y-%m-%d'),
-            model_type=f"{type(MODEL).__name__} (Multi-Ticker)" if "multi" in MODEL_PATH else type(MODEL).__name__,
+            model_type=model_type,
             technical_context=technical_context,
             options_data=options_data,
             all_options=display_options if display_options else None,

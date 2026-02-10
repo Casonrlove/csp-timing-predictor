@@ -55,7 +55,8 @@ class StrikeProbabilityModel:
     ]
 
     # Quantiles to predict - covers the range of typical deltas
-    QUANTILES = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
+    # Added higher quantiles (0.92, 0.95, 0.97) to better capture tail risk
+    QUANTILES = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.92, 0.95, 0.97]
 
     def __init__(self, forward_days=35, use_gpu=True):
         self.forward_days = forward_days
@@ -98,20 +99,21 @@ class StrikeProbabilityModel:
 
                 df = collector.data.copy()
 
-                # Calculate maximum drawdown (regression target)
-                max_drawdown_list = []
+                # Calculate forward return at expiration (regression target)
+                # This matches what delta represents: P(stock ends below strike)
+                forward_drop_list = []
                 for j in range(len(df)):
                     if j + self.forward_days < len(df):
-                        future_prices = df['Close'].iloc[j:j+self.forward_days+1]
                         current_price = df['Close'].iloc[j]
-                        # Drawdown as positive percentage (how much it dropped)
-                        min_price = future_prices.min()
-                        drawdown_pct = ((current_price - min_price) / current_price) * 100
-                        max_drawdown_list.append(drawdown_pct)
+                        future_price = df['Close'].iloc[j + self.forward_days]
+                        # Drop as positive percentage (how much it fell by expiration)
+                        # Positive = stock dropped, Negative = stock rose
+                        drop_pct = ((current_price - future_price) / current_price) * 100
+                        forward_drop_list.append(drop_pct)
                     else:
-                        max_drawdown_list.append(np.nan)
+                        forward_drop_list.append(np.nan)
 
-                df['Max_Drawdown_Pct'] = max_drawdown_list
+                df['Forward_Drop_Pct'] = forward_drop_list
                 df['Ticker'] = ticker
 
                 all_data.append(df)
@@ -130,7 +132,7 @@ class StrikeProbabilityModel:
         """Prepare feature matrix and target"""
         # Feature columns - exclude target and metadata
         exclude_cols = [
-            'Max_Drawdown_Pct', 'Good_CSP_Time', 'Ticker', 'Date',
+            'Max_Drawdown_Pct', 'Forward_Drop_Pct', 'Good_CSP_Time', 'Ticker', 'Date',
             'Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close',
             'Forward_Return', 'Max_Drawdown_35D', 'Adjusted_Threshold',
             'Expected_Premium_Pct'
@@ -140,11 +142,11 @@ class StrikeProbabilityModel:
                            if c not in exclude_cols
                            and self.data[c].dtype in ['float64', 'int64', 'float32', 'int32']]
 
-        # Drop NaN rows
-        df_clean = self.data[self.feature_cols + ['Max_Drawdown_Pct']].dropna()
+        # Drop NaN rows - use Forward_Drop_Pct as target (what delta represents)
+        df_clean = self.data[self.feature_cols + ['Forward_Drop_Pct']].dropna()
 
         X = df_clean[self.feature_cols].values
-        y = df_clean['Max_Drawdown_Pct'].values
+        y = df_clean['Forward_Drop_Pct'].values
 
         print(f"Features: {len(self.feature_cols)}")
         print(f"Samples: {len(X)}")
@@ -153,7 +155,7 @@ class StrikeProbabilityModel:
 
         return X, y
 
-    def train_quantile_models(self, X, y, n_splits=5):
+    def train_quantile_models(self, X, y, n_splits=5, recency_weight=True):
         """Train quantile regression models for each quantile using GPU if available"""
 
         print(f"\nTraining quantile regression models...")
@@ -162,6 +164,18 @@ class StrikeProbabilityModel:
 
         # Scale features
         X_scaled = self.scaler.fit_transform(X)
+
+        # Create sample weights - more weight on recent data
+        if recency_weight:
+            # Exponential decay: recent samples get higher weight
+            # Last sample = weight 1.0, oldest = weight 0.2
+            n = len(y)
+            decay_rate = 3.0  # Higher = more emphasis on recent
+            sample_weights = np.exp(decay_rate * np.linspace(-1, 0, n))
+            sample_weights = sample_weights / sample_weights.mean()  # Normalize
+            print(f"Sample weighting: oldest={sample_weights[0]:.2f}x, newest={sample_weights[-1]:.2f}x")
+        else:
+            sample_weights = np.ones(len(y))
 
         # Time series split for validation
         tscv = TimeSeriesSplit(n_splits=n_splits)
@@ -211,8 +225,8 @@ class StrikeProbabilityModel:
                 loss = np.mean(np.where(errors >= 0, quantile * errors, (quantile - 1) * errors))
                 cv_scores.append(loss)
 
-            # Train final model on all data
-            model.fit(X_scaled, y, verbose=False)
+            # Train final model on all data with sample weights
+            model.fit(X_scaled, y, sample_weight=sample_weights, verbose=False)
             self.quantile_models[quantile] = model
 
             print(f"    CV Pinball Loss: {np.mean(cv_scores):.4f} (+/- {np.std(cv_scores):.4f})")
@@ -231,7 +245,7 @@ class StrikeProbabilityModel:
             random_state=42,
             **device_params
         )
-        self.median_model.fit(X_scaled, y, verbose=False)
+        self.median_model.fit(X_scaled, y, sample_weight=sample_weights, verbose=False)
 
         return self.quantile_models
 
@@ -348,7 +362,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description='Train Strike-Specific Probability Model')
     parser.add_argument('--tickers', nargs='+', help='Tickers to train on (default: all)')
-    parser.add_argument('--period', default='10y', help='Data period (default: 10y)')
+    parser.add_argument('--period', default='3y', help='Data period (default: 3y for recent market conditions)')
     parser.add_argument('--output', default='strike_probability_model.pkl', help='Output model path')
     parser.add_argument('--no-gpu', action='store_true', help='Disable GPU acceleration')
     parser.add_argument('--n-estimators', type=int, default=500, help='Number of trees (default: 500)')
@@ -386,7 +400,7 @@ def main():
 
     # Use last sample as example
     X_sample = X[-1:, :]
-    print(f"\nPredicted probabilities for sample (actual drawdown: {y[-1]:.2f}%):")
+    print(f"\nPredicted probabilities for sample (actual 35D return drop: {y[-1]:.2f}%):")
     for strike in [2.5, 5.0, 7.5, 10.0, 15.0, 20.0]:
         prob = model.predict_strike_probability(X_sample, strike)[0]
         print(f"  Strike {strike:5.1f}% OTM: P(breach) = {prob*100:5.1f}% (like delta {prob:.2f})")

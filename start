@@ -4,8 +4,28 @@
 # Usage: ./start         - Start API server only
 #        ./start --all   - Start API server + ngrok
 #        ./start --train - Train the model (then start server)
+#        ./start --kill  - Stop all processes (server + ngrok)
 
-cd /home/cason/model
+cd /home/cason/Github/csp-timing-predictor
+
+# Kill processes if --kill flag provided
+if [ "$1" == "--kill" ]; then
+    echo "Stopping all processes..."
+    pkill -f "simple_api_server" 2>/dev/null
+    pkill -f "ngrok" 2>/dev/null
+    sleep 1
+
+    # Check if any processes are still running
+    if pgrep -f "simple_api_server" > /dev/null || pgrep -f "ngrok" > /dev/null; then
+        echo "✗ Some processes still running. Forcing kill..."
+        pkill -9 -f "simple_api_server" 2>/dev/null
+        pkill -9 -f "ngrok" 2>/dev/null
+        sleep 1
+    fi
+
+    echo "✓ All processes stopped"
+    exit 0
+fi
 
 # Train model if --train flag provided
 if [ "$1" == "--train" ]; then

@@ -288,6 +288,51 @@ class CSPDataCollector:
         # Volatility ratio (current vs 252-day average)
         df['Volatility_Ratio'] = df['Volatility_20D'] / df['Volatility_252D']
 
+        # === IV-BASED FEATURES ===
+        # These are critical for options pricing accuracy
+
+        # 1. VIX Rank (VIX percentile over past year) - proxy for market IV
+        if 'VIX' in df.columns:
+            df['VIX_Rank'] = df['VIX'].rolling(window=252).apply(
+                lambda x: (x.iloc[-1] - x.min()) / (x.max() - x.min()) * 100 if x.max() > x.min() else 50,
+                raw=False
+            )
+            # Fill NaN with 50 (neutral)
+            df['VIX_Rank'] = df['VIX_Rank'].fillna(50)
+
+            # 2. IV vs RV Ratio (Volatility Risk Premium indicator)
+            # VIX represents ~30-day implied vol, compare to realized
+            # Ratio > 1 means IV > RV (options overpriced, good for selling)
+            df['IV_RV_Ratio'] = df['VIX'] / df['Volatility_20D'].clip(lower=1)
+            df['IV_RV_Ratio'] = df['IV_RV_Ratio'].clip(0.5, 3.0)  # Limit extremes
+            df['IV_RV_Ratio'] = df['IV_RV_Ratio'].fillna(1.0)
+
+            # 3. VIX Change features (IV momentum)
+            df['VIX_Change_1D'] = df['VIX'].pct_change(1) * 100
+            df['VIX_Change_5D'] = df['VIX'].pct_change(5) * 100
+            df['VIX_SMA_10'] = df['VIX'].rolling(window=10).mean()
+            df['VIX_vs_SMA'] = (df['VIX'] / df['VIX_SMA_10'] - 1) * 100
+
+            # 4. VIX Level buckets (categorical via numeric)
+            # Low VIX (<15) = complacent, High VIX (>25) = fearful
+            df['VIX_Level'] = df['VIX'].apply(lambda x: 0 if x < 15 else (1 if x < 20 else (2 if x < 25 else 3)))
+
+            # 5. Volatility term structure proxy
+            # Compare short-term (10D) vs medium-term (20D) realized vol
+            df['Volatility_10D'] = close.pct_change().rolling(window=10).std() * np.sqrt(252) * 100
+            df['Vol_Term_Structure'] = df['Volatility_10D'] / df['Volatility_20D'].clip(lower=1)
+            df['Vol_Term_Structure'] = df['Vol_Term_Structure'].fillna(1.0)
+        else:
+            # Default values if VIX not available
+            df['VIX_Rank'] = 50
+            df['IV_RV_Ratio'] = 1.0
+            df['VIX_Change_1D'] = 0
+            df['VIX_Change_5D'] = 0
+            df['VIX_vs_SMA'] = 0
+            df['VIX_Level'] = 1
+            df['Volatility_10D'] = df['Volatility_20D']
+            df['Vol_Term_Structure'] = 1.0
+
         # Earnings proximity feature
         if hasattr(self, 'earnings_dates') and len(self.earnings_dates) > 0:
             df['Days_To_Earnings'] = self._calculate_days_to_earnings(df.index)
@@ -296,6 +341,138 @@ class CSPDataCollector:
         else:
             df['Days_To_Earnings'] = 999  # Large number means unknown
             df['Near_Earnings'] = 0
+
+        # NEW: Advanced risk features
+        # Return distribution features (tail risk indicators)
+        df['Return_Skew_20D'] = close.pct_change().rolling(window=20).skew()
+        df['Return_Kurt_20D'] = close.pct_change().rolling(window=20).kurt()
+
+        # Drawdown from 52-week high (distinct from 20D high)
+        df['High_252D'] = close.rolling(window=252).max()
+        df['Drawdown_From_52W_High'] = ((close - df['High_252D']) / df['High_252D']) * 100
+
+        # Consecutive down days (panic/capitulation indicator)
+        down_days = (close.pct_change() < 0).astype(int)
+        df['Consecutive_Down_Days'] = down_days.groupby((down_days != down_days.shift()).cumsum()).cumsum()
+
+        # Market regime indicators
+        df['Regime_Trend'] = np.where(df['SMA_50'] > df['SMA_200'], 1, 0)  # Bull=1, Bear=0
+
+        # VIX acceleration (rate of change of VIX change)
+        if 'VIX_Change_1D' in df.columns:
+            df['VIX_Acceleration'] = df['VIX_Change_1D'] - df['VIX_Change_1D'].shift(1)
+        else:
+            df['VIX_Acceleration'] = 0
+
+        # === MEAN REVERSION FEATURES (8 new features) ===
+        # These capture "stock dropped hard → likely to bounce" patterns
+
+        # 1. Recent drop magnitude (key for mean reversion)
+        df['Recent_Drop_1D'] = df['Return_1D'].apply(lambda x: abs(x) if x < 0 else 0)
+        df['Recent_Drop_3D'] = close.pct_change(3).apply(lambda x: abs(x) * 100 if x < 0 else 0)
+        df['Recent_Drop_5D'] = close.pct_change(5).apply(lambda x: abs(x) * 100 if x < 0 else 0)
+
+        # 2. Oversold indicators
+        df['RSI_Oversold'] = (df['RSI'] < 30).astype(int)  # Classic oversold level
+        df['RSI_Extreme'] = (df['RSI'] < 25).astype(int)   # Extreme oversold
+
+        # 3. Pullback from recent highs (already have High_20D, add percentage)
+        df['Pullback_From_5D_High'] = ((close - df['High'].rolling(window=5).max()) / df['High'].rolling(window=5).max()) * 100
+        df['Pullback_From_20D_High'] = ((close - df['High_20D']) / df['High_20D']) * 100
+
+        # 4. Return acceleration (is the drop accelerating or decelerating?)
+        df['Return_Acceleration'] = df['Return_1D'] - df['Return_1D'].shift(1)
+        # Negative acceleration during drop = deceleration = potential bottom
+
+        # 5. Volume spike on down days (capitulation indicator)
+        df['Volume_Spike_Down'] = ((df['Volume_Ratio'] > 1.5) & (df['Return_1D'] < 0)).astype(int)
+
+        # 6. Mean reversion z-score
+        df['Return_Mean_20D'] = df['Return_1D'].rolling(window=20).mean()
+        df['Return_Std_20D'] = df['Return_1D'].rolling(window=20).std()
+        # Avoid division by zero
+        df['Return_ZScore'] = np.where(
+            df['Return_Std_20D'] > 0,
+            (df['Return_1D'] - df['Return_Mean_20D']) / df['Return_Std_20D'],
+            0
+        )
+        # Z-score < -2 = strong deviation below mean = reversion candidate
+
+        # === REGIME & MEAN-REVERSION QUALITY FEATURES ===
+
+        # 7. Rolling lag-1 autocorrelation of returns (20D window)
+        # Negative = mean-reverting (good CSP entry after drops)
+        # Positive = trending (dangerous to sell puts)
+        daily_returns = close.pct_change()
+        df['Return_Autocorr_20D'] = daily_returns.rolling(window=20).apply(
+            lambda x: x.autocorr(lag=1) if len(x.dropna()) >= 6 else 0.0, raw=False
+        ).fillna(0.0)
+
+        # 8. Variance Ratio (simpler mean-reversion proxy, faster than Hurst)
+        # VR < 1 = mean-reverting, VR > 1 = trending
+        # VR = Var(k-period returns) / (k * Var(1-period returns))
+        def _variance_ratio(returns, k=5):
+            """Variance ratio test statistic"""
+            if len(returns) < k + 5:
+                return 1.0
+            r = np.array(returns)
+            var1 = np.var(np.diff(r), ddof=1) if len(r) > 1 else 1e-8
+            if var1 < 1e-10:
+                return 1.0
+            # k-period log returns from overlapping windows
+            log_prices = np.log(r + 1e-10)
+            k_returns = np.diff(log_prices, n=k) if len(log_prices) > k else np.array([0.0])
+            var_k = np.var(k_returns, ddof=1) if len(k_returns) > 1 else 1e-8
+            return var_k / (k * var1)
+
+        # Use price series for variance ratio (rolling 40D window)
+        df['Variance_Ratio_5D'] = close.rolling(window=40).apply(
+            lambda x: _variance_ratio(x, k=5), raw=True
+        ).fillna(1.0).clip(0.2, 3.0)
+
+        # 9. Hurst Exponent (rolling 60D) using simplified R/S analysis
+        # H < 0.5 = mean-reverting, H = 0.5 = random walk, H > 0.5 = trending
+        def _hurst_rs(prices):
+            """Simplified R/S Hurst exponent on price series"""
+            n = len(prices)
+            if n < 20:
+                return 0.5
+            log_ret = np.diff(np.log(prices + 1e-10))
+            if len(log_ret) < 10:
+                return 0.5
+
+            # Use two sub-lags to estimate slope
+            half = max(len(log_ret) // 2, 8)
+            rs_vals = []
+            for lag in [half // 2, half]:
+                sub = log_ret[:lag]
+                mean = np.mean(sub)
+                dev = np.cumsum(sub - mean)
+                R = dev.max() - dev.min()
+                S = np.std(sub, ddof=1)
+                if S > 1e-10:
+                    rs_vals.append((lag, R / S))
+
+            if len(rs_vals) < 2:
+                return 0.5
+            lags_log = np.log([v[0] for v in rs_vals])
+            rs_log = np.log([v[1] for v in rs_vals])
+            H = np.polyfit(lags_log, rs_log, 1)[0]
+            return float(np.clip(H, 0.1, 0.9))
+
+        df['Hurst_Exponent_60D'] = close.rolling(window=60).apply(
+            _hurst_rs, raw=True
+        ).fillna(0.5)
+
+        # 10. IV Percentile (more robust than IV Rank — uses median/IQR instead of min/max)
+        # Less sensitive to outlier spikes; better calibrated probability
+        if 'VIX' in df.columns:
+            df['VIX_Percentile_252D'] = df['VIX'].rolling(window=252).apply(
+                lambda x: float(np.mean(x[:-1] <= x[-1])) * 100 if len(x) > 1 else 50.0,
+                raw=True
+            ).fillna(50.0)
+        else:
+            df['VIX_Percentile_252D'] = 50.0
 
         self.data = df
         return df
@@ -322,49 +499,90 @@ class CSPDataCollector:
 
         return days_to_earnings
 
-    def create_target_variable(self, forward_days=35, threshold_pct=-5, volatility_adjusted=True):
+    def create_target_variable(self, forward_days=35, strike_otm_pct=0.10, use_csp_outcome=True):
         """
         Create target variable: Was it a good time to sell a CSP?
-        Good time = stock doesn't drop significantly in next 30-45 days
+
+        NEW APPROACH (use_csp_outcome=True):
+        Simulates actual CSP trade outcome - works correctly for ALL tickers including inverse ETFs!
+        - Strike price = current_price * (1 - strike_otm_pct)  [typically 10% OTM for 0.30 delta]
+        - CSP profitable if stock never drops below strike during holding period
+        - This automatically handles TQQQ (bull) vs SQQQ (bear) correctly!
+
+        OLD APPROACH (use_csp_outcome=False):
+        Just checks if stock avoided X% drop - doesn't understand CSP directionality
 
         Args:
-            forward_days: Days to look forward (default 35, middle of 30-45 range)
-            threshold_pct: Max acceptable drawdown % (default -5%, relaxed from -3%)
-            volatility_adjusted: If True, scale threshold by stock's volatility (default True)
+            forward_days: Days to hold CSP (default 35, middle of 30-45 DTE range)
+            strike_otm_pct: How far OTM to set strike (default 0.10 = 10% below = ~0.30 delta)
+            use_csp_outcome: Use actual CSP simulation (True) vs simple drawdown check (False)
         """
         df = self.data.copy()
 
-        # Calculate forward returns and max drawdown
-        df['Forward_Return'] = df['Close'].shift(-forward_days) / df['Close'] - 1
+        if use_csp_outcome:
+            # SIMULATE ACTUAL CSP TRADES
+            print(f"Using CSP outcome simulation (strike {strike_otm_pct*100:.0f}% OTM)")
 
-        # Calculate max drawdown over next forward_days
-        max_drawdown_list = []
-        for i in range(len(df)):
-            if i + forward_days < len(df):
-                future_prices = df['Close'].iloc[i:i+forward_days+1]
-                current_price = df['Close'].iloc[i]
-                drawdown = ((future_prices.min() - current_price) / current_price) * 100
-                max_drawdown_list.append(drawdown)
-            else:
-                max_drawdown_list.append(np.nan)
+            csp_profitable_list = []
+            min_price_list = []
+            strike_breach_pct_list = []
 
-        df['Max_Drawdown_35D'] = max_drawdown_list
+            for i in range(len(df)):
+                if i + forward_days < len(df):
+                    # Entry price and strike
+                    entry_price = df['Close'].iloc[i]
+                    strike_price = entry_price * (1 - strike_otm_pct)
 
-        # Volatility-adjusted threshold
-        if volatility_adjusted and 'Volatility_20D' in df.columns:
-            # Scale threshold by volatility relative to typical market vol (~20% annual = ~1.25% daily)
-            # High vol stocks get wider threshold, low vol stocks get tighter threshold
-            typical_vol = 0.20  # 20% annual volatility baseline
-            vol_ratio = df['Volatility_20D'] / typical_vol
-            vol_ratio = vol_ratio.clip(0.5, 2.0)  # Limit scaling to 0.5x - 2x
-            df['Adjusted_Threshold'] = threshold_pct * vol_ratio
-            df['Good_CSP_Time'] = (df['Max_Drawdown_35D'] > df['Adjusted_Threshold']).astype(int)
+                    # Future prices over holding period
+                    future_prices = df['Close'].iloc[i:i+forward_days+1]
+                    min_price = future_prices.min()
+
+                    # CSP is profitable if stock never breached strike
+                    csp_profitable = (min_price >= strike_price)
+
+                    # How far below strike did it go (if breached)?
+                    strike_breach_pct = ((min_price - strike_price) / strike_price) * 100 if min_price < strike_price else 0
+
+                    csp_profitable_list.append(1 if csp_profitable else 0)
+                    min_price_list.append(min_price)
+                    strike_breach_pct_list.append(strike_breach_pct)
+                else:
+                    csp_profitable_list.append(np.nan)
+                    min_price_list.append(np.nan)
+                    strike_breach_pct_list.append(np.nan)
+
+            df['CSP_Profitable'] = csp_profitable_list
+            df['Min_Price_35D'] = min_price_list
+            df['Strike_Breach_Pct'] = strike_breach_pct_list  # Negative if breached
+            df['Good_CSP_Time'] = df['CSP_Profitable']
+
+            # Also keep max drawdown for reference
+            df['Max_Drawdown_35D'] = ((df['Min_Price_35D'] - df['Close']) / df['Close']) * 100
+
         else:
-            # Fixed threshold
+            # OLD METHOD: Just check drawdown (doesn't handle inverse ETFs correctly)
+            print(f"Using old drawdown method (not recommended for inverse ETFs)")
+
+            # Calculate forward returns and max drawdown
+            df['Forward_Return'] = df['Close'].shift(-forward_days) / df['Close'] - 1
+
+            max_drawdown_list = []
+            for i in range(len(df)):
+                if i + forward_days < len(df):
+                    future_prices = df['Close'].iloc[i:i+forward_days+1]
+                    current_price = df['Close'].iloc[i]
+                    drawdown = ((future_prices.min() - current_price) / current_price) * 100
+                    max_drawdown_list.append(drawdown)
+                else:
+                    max_drawdown_list.append(np.nan)
+
+            df['Max_Drawdown_35D'] = max_drawdown_list
+
+            # Use threshold to determine good timing
+            threshold_pct = -strike_otm_pct * 100  # Convert to drawdown %
             df['Good_CSP_Time'] = (df['Max_Drawdown_35D'] > threshold_pct).astype(int)
 
-        # Also create a regression target for premium potential
-        # Assume we could sell at 0.30 delta, approximate premium based on ATR
+        # Premium potential (for reference)
         df['Expected_Premium_Pct'] = df['ATR_Pct'] * 0.3  # Rough approximation
 
         self.data = df
@@ -397,11 +615,34 @@ class CSPDataCollector:
             # Returns
             'Return_1D', 'Return_5D', 'Return_20D',
 
-            # Market context
+            # Market context & IV features
             'VIX',
+            'VIX_Rank', 'IV_RV_Ratio',
+            'VIX_Change_1D', 'VIX_Change_5D', 'VIX_vs_SMA',
+            'VIX_Level', 'Volatility_10D', 'Vol_Term_Structure',
+            'VIX_Acceleration',
 
             # Earnings proximity
-            'Days_To_Earnings', 'Near_Earnings'
+            'Days_To_Earnings', 'Near_Earnings',
+
+            # Advanced risk features
+            'Return_Skew_20D', 'Return_Kurt_20D',
+            'Drawdown_From_52W_High', 'Consecutive_Down_Days',
+            'Regime_Trend',
+
+            # Mean reversion features (NEW - 11 features)
+            'Recent_Drop_1D', 'Recent_Drop_3D', 'Recent_Drop_5D',
+            'RSI_Oversold', 'RSI_Extreme',
+            'Pullback_From_5D_High', 'Pullback_From_20D_High',
+            'Return_Acceleration',
+            'Volume_Spike_Down',
+            'Return_Mean_20D', 'Return_Std_20D', 'Return_ZScore',
+
+            # Regime & mean-reversion quality (NEW - 4 features)
+            'Return_Autocorr_20D',   # Lag-1 autocorrelation: negative = mean-reverting
+            'Variance_Ratio_5D',     # < 1 = mean-reverting, > 1 = trending
+            'Hurst_Exponent_60D',    # < 0.5 = mean-reverting regime
+            'VIX_Percentile_252D',   # More robust IV level than VIX_Rank
         ]
 
         # Check for NaN values before dropping
