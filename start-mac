@@ -1,0 +1,175 @@
+#!/bin/bash
+
+# CSP Timing Predictor - macOS Startup Script (M1/M2/M3)
+# Usage: ./start-mac          - Start API server only
+#        ./start-mac --all    - Start API server + ngrok
+#        ./start-mac --setup  - Install all dependencies (run once after cloning)
+#        ./start-mac --train  - Train the model (then start server)
+#        ./start-mac --kill   - Stop all processes (server + ngrok)
+
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$REPO_DIR"
+
+NGROK_DOMAIN="destinee-unbenignant-shandra.ngrok-free.app"
+
+# ─── SETUP ────────────────────────────────────────────────────────────────────
+if [ "$1" == "--setup" ]; then
+    echo "========================================"
+    echo " CSP Timing Predictor - macOS Setup"
+    echo "========================================"
+    echo ""
+
+    # Homebrew
+    if ! command -v brew &>/dev/null; then
+        echo "Installing Homebrew..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    else
+        echo "✓ Homebrew already installed"
+    fi
+
+    # Python 3.11+
+    if ! command -v python3 &>/dev/null || ! python3 -c "import sys; assert sys.version_info >= (3,11)" &>/dev/null; then
+        echo "Installing Python 3.11..."
+        brew install python@3.11
+    else
+        echo "✓ Python $(python3 --version) already installed"
+    fi
+
+    # ngrok
+    if ! command -v ngrok &>/dev/null; then
+        echo "Installing ngrok..."
+        brew install ngrok/ngrok/ngrok
+    else
+        echo "✓ ngrok already installed"
+    fi
+
+    # Python virtual environment
+    if [ ! -d "$REPO_DIR/.venv" ]; then
+        echo "Creating virtual environment..."
+        python3 -m venv "$REPO_DIR/.venv"
+    else
+        echo "✓ Virtual environment already exists"
+    fi
+
+    echo "Installing Python dependencies..."
+    source "$REPO_DIR/.venv/bin/activate"
+    pip install --upgrade pip --quiet
+    pip install \
+        fastapi uvicorn[standard] \
+        xgboost scikit-learn \
+        pandas numpy \
+        yfinance \
+        requests httpx \
+        optuna \
+        --quiet
+    echo "✓ Python dependencies installed"
+
+    # ngrok authtoken
+    echo ""
+    echo "=========================================="
+    echo " ngrok Auth Token"
+    echo "=========================================="
+    echo " Get your token at: https://dashboard.ngrok.com/get-started/your-authtoken"
+    echo -n " Paste your ngrok authtoken (or press Enter to skip): "
+    read -r NGROK_TOKEN
+    if [ -n "$NGROK_TOKEN" ]; then
+        ngrok config add-authtoken "$NGROK_TOKEN"
+        echo "✓ ngrok authtoken saved"
+    else
+        echo "  Skipped. Run 'ngrok config add-authtoken <token>' later."
+    fi
+
+    echo ""
+    echo "========================================"
+    echo " Setup complete!"
+    echo " Run './start-mac --all' to start."
+    echo "========================================"
+    exit 0
+fi
+
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+# Activate venv if it exists, otherwise use system python
+if [ -d "$REPO_DIR/.venv" ]; then
+    source "$REPO_DIR/.venv/bin/activate"
+    PYTHON="python"
+else
+    PYTHON="python3"
+fi
+
+# ─── KILL ─────────────────────────────────────────────────────────────────────
+if [ "$1" == "--kill" ]; then
+    echo "Stopping all processes..."
+    pkill -f "simple_api_server" 2>/dev/null
+    pkill -f "ngrok" 2>/dev/null
+    sleep 1
+    if pgrep -f "simple_api_server" > /dev/null || pgrep -f "ngrok" > /dev/null; then
+        echo "✗ Some processes still running. Forcing kill..."
+        pkill -9 -f "simple_api_server" 2>/dev/null
+        pkill -9 -f "ngrok" 2>/dev/null
+        sleep 1
+    fi
+    echo "✓ All processes stopped"
+    exit 0
+fi
+
+# ─── TRAIN ────────────────────────────────────────────────────────────────────
+if [ "$1" == "--train" ]; then
+    echo "Training model (CPU mode on Apple Silicon)..."
+    echo "This may take 20-40 minutes on M1."
+    echo ""
+    $PYTHON train_timing_model_per_ticker.py
+    if [ $? -eq 0 ]; then
+        echo "✓ Model training complete!"
+    else
+        echo "✗ Model training failed. Check output above."
+        exit 1
+    fi
+    echo ""
+fi
+
+# ─── START SERVER ─────────────────────────────────────────────────────────────
+pkill -f "simple_api_server" 2>/dev/null
+pkill -f "ngrok" 2>/dev/null
+sleep 1
+
+echo "Starting CSP Timing API Server..."
+nohup $PYTHON simple_api_server.py --port 8000 > server.log 2>&1 &
+
+echo -n "Waiting for server"
+for i in {1..30}; do
+    if curl -s http://localhost:8000/ > /dev/null 2>&1; then
+        echo ""
+        echo "✓ API Server running on http://localhost:8000"
+        break
+    fi
+    echo -n "."
+    sleep 1
+    if [ $i -eq 30 ]; then
+        echo ""
+        echo "✗ API Server failed to start. Check server.log:"
+        tail -20 server.log
+        exit 1
+    fi
+done
+
+# ─── NGROK ────────────────────────────────────────────────────────────────────
+if [ "$1" == "--all" ]; then
+    if ! command -v ngrok &>/dev/null; then
+        echo "✗ ngrok not found. Run './start-mac --setup' first."
+        exit 1
+    fi
+    echo "Starting ngrok tunnel..."
+    nohup ngrok http 8000 --domain="$NGROK_DOMAIN" > ngrok.log 2>&1 &
+    sleep 2
+    if grep -q "ERR_NGROK" ngrok.log 2>/dev/null; then
+        echo "✗ ngrok failed:"
+        cat ngrok.log
+        exit 1
+    fi
+    echo "✓ ngrok running at https://$NGROK_DOMAIN"
+fi
+
+echo ""
+echo "Done! Logs:"
+echo "  - Server: tail -f $REPO_DIR/server.log"
+echo "  - ngrok:  tail -f $REPO_DIR/ngrok.log"

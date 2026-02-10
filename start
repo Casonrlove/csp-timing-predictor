@@ -6,7 +6,7 @@
 #        ./start --train - Train the model (then start server)
 #        ./start --kill  - Stop all processes (server + ngrok)
 
-cd /home/cason/Github/csp-timing-predictor
+cd "$(dirname "$(realpath "$0")")"
 
 # Kill processes if --kill flag provided
 if [ "$1" == "--kill" ]; then
