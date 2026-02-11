@@ -35,15 +35,16 @@ from sklearn.metrics import (
 from sklearn.preprocessing import StandardScaler
 
 from data_collector import CSPDataCollector
+from feature_utils import apply_rolling_threshold, calculate_group_threshold
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # Ticker groups (must match train_timing_model_per_ticker.py)
 TICKER_GROUPS = {
-    "high_vol":    ["TSLA", "NVDA", "AMD"],
-    "tech_growth": ["META", "GOOGL", "AMZN"],
-    "tech_stable": ["AAPL", "MSFT"],
-    "etf":         ["SPY", "QQQ"],
+    "high_vol":    ["TSLA", "NVDA", "AMD", "MSTR", "COIN", "PLTR"],
+    "tech_growth": ["META", "GOOGL", "AMZN", "NFLX", "CRM"],
+    "tech_stable": ["AAPL", "MSFT", "V", "MA"],
+    "etf":         ["SPY", "QQQ", "IWM"],
 }
 
 # XGBoost params (mirrors training script; no GPU needed for validation)
@@ -90,36 +91,7 @@ def collect_group_data(group_name: str, tickers: list[str], period: str = "10y")
     return pd.concat(frames, ignore_index=False).sort_index(), feature_cols
 
 
-def calculate_group_threshold(df: pd.DataFrame) -> float:
-    """60th-percentile drawdown threshold (matches training script logic)."""
-    drawdowns = df["Max_Drawdown_35D"].dropna()
-    return float(drawdowns.quantile(0.60)) if len(drawdowns) >= 10 else -5.0
-
-
-def apply_rolling_threshold(df: pd.DataFrame, window: int = 90, quantile: float = 0.60) -> pd.DataFrame:
-    """Assign target using a per-ticker rolling window threshold.
-
-    For each row the threshold is the `quantile`-th percentile of the trailing
-    `window` days of Max_Drawdown_35D for that ticker.  This keeps the positive
-    rate near (1 - quantile) in every calendar year regardless of whether the
-    market is in a bull or bear regime — the model always sees roughly the same
-    class balance, rather than wildly swinging from 17 % in a bear year to 46 %
-    in a bull year.
-
-    Falls back to the full-history threshold for early rows that don't yet have
-    `window // 2` observations.
-    """
-    df = df.copy()
-    df["target"] = 0
-    for ticker in df["ticker"].unique():
-        mask = df["ticker"] == ticker
-        drawdowns = df.loc[mask, "Max_Drawdown_35D"]
-        rolling_thresh = drawdowns.rolling(window=window, min_periods=window // 2).quantile(quantile)
-        # rows without enough history fall back to the full-ticker median
-        fallback = float(drawdowns.quantile(quantile)) if len(drawdowns) >= 10 else -5.0
-        rolling_thresh = rolling_thresh.fillna(fallback)
-        df.loc[mask, "target"] = (drawdowns > rolling_thresh).astype(int)
-    return df
+# apply_rolling_threshold and calculate_group_threshold are imported from feature_utils
 
 
 def run_walk_forward(

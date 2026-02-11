@@ -22,6 +22,25 @@ except ImportError:
 
 
 class CSPDataCollector:
+    # Class-level cache so all instances share the same market-context data
+    # within a single process run (avoids redundant yfinance downloads).
+    _spy_cache: dict = {}           # {period: DataFrame}
+    _sector_cache: dict = {}        # {(ticker, period): DataFrame}
+    _vix9d_cache: dict = {}         # {period: DataFrame}
+
+    # Map each ticker to its closest sector / thematic ETF.
+    # Unknown tickers fall back to SPY (market proxy).
+    SECTOR_ETF_MAP: dict = {
+        'NVDA': 'SMH', 'AMD': 'SMH', 'INTC': 'SMH', 'MRVL': 'SMH',
+        'TSLA': 'XLY', 'AMZN': 'XLY',
+        'META': 'XLC', 'GOOGL': 'XLC', 'GOOG': 'XLC', 'NFLX': 'XLC',
+        'AAPL': 'XLK', 'MSFT': 'XLK', 'CRM': 'XLK',
+        'SPY': 'SPY', 'QQQ': 'QQQ',
+        'IWM': 'SPY',
+        'V': 'XLF', 'MA': 'XLF',
+        'MSTR': 'QQQ', 'COIN': 'XLF', 'PLTR': 'XLK',
+    }
+
     def __init__(self, ticker='NVDA', period='10y'):
         self.ticker = ticker
         self.period = period
@@ -69,6 +88,34 @@ class CSPDataCollector:
         df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
 
         return df
+
+    # ------------------------------------------------------------------
+    # Helper: fetch a reference series (SPY, sector ETF, VIX9D, PCR)
+    # Uses a class-level cache keyed by (symbol, period) to avoid
+    # redundant downloads when multiple instances share a process.
+    # ------------------------------------------------------------------
+
+    def _fetch_reference_series(self, symbol: str, column: str = 'Close') -> pd.Series | None:
+        """Return a tz-naive daily Close series for ``symbol`` over self.period."""
+        cache_key = (symbol, self.period)
+        if cache_key not in CSPDataCollector._sector_cache:
+            try:
+                ref = yf.Ticker(symbol)
+                df_ref = ref.history(period=self.period)
+                if df_ref is not None and len(df_ref) > 0 and column in df_ref.columns:
+                    series = df_ref[column].copy()
+                    idx = pd.to_datetime(series.index)
+                    # Convert tz-aware to tz-naive (UTC-strip) to match self.data index
+                    if idx.tz is not None:
+                        idx = idx.tz_convert('UTC').tz_localize(None)
+                    series.index = idx
+                    CSPDataCollector._sector_cache[cache_key] = series
+                else:
+                    CSPDataCollector._sector_cache[cache_key] = None
+            except Exception as e:
+                print(f"  [ref] Could not fetch {symbol}: {e}")
+                CSPDataCollector._sector_cache[cache_key] = None
+        return CSPDataCollector._sector_cache[cache_key]
 
     def fetch_data(self):
         """Fetch historical stock data from Schwab API (with Yahoo fallback)"""
@@ -173,6 +220,20 @@ class CSPDataCollector:
         if not vix_loaded or 'VIX' not in self.data.columns or self.data['VIX'].isna().all():
             print("Using constant VIX value (15.0)")
             self.data['VIX'] = 15.0
+
+        # Fetch VIX9D (short-term implied vol index) from Yahoo Finance
+        try:
+            vix9d_series = self._fetch_reference_series('^VIX9D')
+            if vix9d_series is not None:
+                vix9d_aligned = vix9d_series.reindex(self.data.index, method='nearest').ffill().bfill()
+                self.data['VIX9D'] = vix9d_aligned
+                vix_fallback = self.data['VIX'] if 'VIX' in self.data.columns else 15.0
+                self.data['VIX9D'] = self.data['VIX9D'].fillna(vix_fallback)
+            else:
+                self.data['VIX9D'] = self.data['VIX'] if 'VIX' in self.data.columns else 15.0
+        except Exception as e:
+            print(f"  [VIX9D] Warning: {e}")
+            self.data['VIX9D'] = self.data['VIX'] if 'VIX' in self.data.columns else 15.0
 
         print(f"Fetched {len(self.data)} days of data (source: {data_source})")
         self.data_source = data_source
@@ -474,6 +535,46 @@ class CSPDataCollector:
         else:
             df['VIX_Percentile_252D'] = 50.0
 
+        # ================================================================
+        # NEW TIER-1 MARKET-CONTEXT FEATURES
+        # ================================================================
+
+        # A. SPY-Relative Return — how did this stock do vs the market?
+        spy_series = self._fetch_reference_series('SPY')
+        if spy_series is not None:
+            # reindex_like fills missing dates (holidays/weekends) via nearest-trading-day
+            spy_aligned = spy_series.reindex(df.index, method='nearest').ffill().bfill()
+            df['Return_5D_SPY'] = spy_aligned.pct_change(5) * 100
+            df['Return_20D_SPY'] = spy_aligned.pct_change(20) * 100
+            df['Stock_vs_SPY_5D'] = df['Return_5D'] - df['Return_5D_SPY']
+            df['Stock_vs_SPY_20D'] = df['Return_20D'] - df['Return_20D_SPY']
+        else:
+            df['Stock_vs_SPY_5D'] = 0.0
+            df['Stock_vs_SPY_20D'] = 0.0
+
+        # B. Sector ETF Relative Strength
+        sector_etf = self.SECTOR_ETF_MAP.get(self.ticker, 'SPY')
+        sector_series = self._fetch_reference_series(sector_etf)
+        if sector_series is not None:
+            sector_aligned = sector_series.reindex(df.index, method='nearest').ffill().bfill()
+            df['Return_5D_Sector'] = sector_aligned.pct_change(5) * 100
+            df['Return_20D_Sector'] = sector_aligned.pct_change(20) * 100
+            df['Sector_RS_5D'] = df['Return_5D'] - df['Return_5D_Sector']
+            df['Sector_RS_20D'] = df['Return_20D'] - df['Return_20D_Sector']
+        else:
+            df['Sector_RS_5D'] = 0.0
+            df['Sector_RS_20D'] = 0.0
+
+        # C. VIX Term Structure using VIX9D (near-term fear vs medium-term)
+        if 'VIX9D' in df.columns and 'VIX' in df.columns:
+            df['VIX9D_Ratio'] = (df['VIX9D'] / df['VIX'].clip(lower=1)).clip(0.5, 3.0).fillna(1.0)
+            vix9d_sma5 = df['VIX9D'].rolling(window=5).mean()
+            df['VIX9D_vs_SMA5'] = ((df['VIX9D'] / vix9d_sma5.clip(lower=0.1)) - 1) * 100
+            df['VIX9D_vs_SMA5'] = df['VIX9D_vs_SMA5'].fillna(0.0)
+        else:
+            df['VIX9D_Ratio'] = 1.0
+            df['VIX9D_vs_SMA5'] = 0.0
+
         self.data = df
         return df
 
@@ -495,7 +596,10 @@ class CSPDataCollector:
             # Find closest earnings date
             time_diffs = [(e - date).days for e in self.earnings_dates]
             closest_idx = np.argmin(np.abs(time_diffs))
-            days_to_earnings.append(time_diffs[closest_idx])
+            raw_value = time_diffs[closest_idx]
+            # Clip to [-30, 90] so stale past earnings don't produce extreme
+            # out-of-distribution values (e.g. -2991) that pollute the scaler.
+            days_to_earnings.append(int(np.clip(raw_value, -30, 90)))
 
         return days_to_earnings
 
@@ -643,6 +747,14 @@ class CSPDataCollector:
             'Variance_Ratio_5D',     # < 1 = mean-reverting, > 1 = trending
             'Hurst_Exponent_60D',    # < 0.5 = mean-reverting regime
             'VIX_Percentile_252D',   # More robust IV level than VIX_Rank
+
+            # Tier-1 new market-context features (8 features)
+            'Stock_vs_SPY_5D',       # A: Stock outperformance vs SPY (5D)
+            'Stock_vs_SPY_20D',      # A: Stock outperformance vs SPY (20D)
+            'Sector_RS_5D',          # B: Sector relative strength (5D)
+            'Sector_RS_20D',         # B: Sector relative strength (20D)
+            'VIX9D_Ratio',           # C: VIX9D / VIX near-term fear ratio
+            'VIX9D_vs_SMA5',         # C: VIX9D deviation from 5D average
         ]
 
         # Check for NaN values before dropping
