@@ -132,6 +132,61 @@ def run_walk_forward(
     print(f"  Threshold: {threshold_desc}  |  overall positive rate: {df['target'].mean():.1%}")
 
     fold_results = []
+
+    def _policy_metrics(y_true: np.ndarray, y_prob: np.ndarray, prices: np.ndarray, atr_pct: np.ndarray) -> dict:
+        """
+        Approximate production policy metrics using an EV-based trade rule.
+        Mirrors the current server policy style (EV + soft timing prior) with
+        a synthetic premium model for historical backtests.
+        """
+        if len(y_true) == 0:
+            return {
+                "n_trades": 0,
+                "trade_rate": 0.0,
+                "total_pnl": 0.0,
+                "pnl_per_trade": 0.0,
+                "win_rate": 0.0,
+                "avg_risk_adj_ev": 0.0,
+                "max_drawdown": 0.0,
+            }
+
+        strike = prices * 0.95
+        # Synthetic premium proxy (bounded): higher ATR implies richer premium.
+        atr_pct = np.nan_to_num(atr_pct, nan=0.0)
+        premium_rate = np.clip(0.01 + (atr_pct / 100.0) * 0.15, 0.005, 0.04)
+        premium = strike * premium_rate
+
+        p_assign = 1.0 - y_prob
+        expected_assignment_loss = p_assign * strike * 0.05
+        expected_ev = premium - expected_assignment_loss
+        timing_multiplier = 0.75 + 0.5 * y_prob
+        risk_adj_ev = expected_ev * timing_multiplier
+
+        trade_mask = risk_adj_ev > 0
+        n_trades = int(trade_mask.sum())
+
+        realized_trade_pnl = np.where(y_true == 1, premium, premium - (strike * 0.05))
+        realized_pnl = np.where(trade_mask, realized_trade_pnl, 0.0)
+
+        equity_curve = np.cumsum(realized_pnl)
+        if len(equity_curve) > 0:
+            running_max = np.maximum.accumulate(equity_curve)
+            max_drawdown = float(np.max(running_max - equity_curve))
+        else:
+            max_drawdown = 0.0
+
+        wins = int(np.sum(trade_mask & (realized_trade_pnl > 0)))
+        win_rate = (wins / n_trades) if n_trades > 0 else 0.0
+
+        return {
+            "n_trades": n_trades,
+            "trade_rate": float(n_trades / len(y_true)),
+            "total_pnl": float(np.sum(realized_pnl)),
+            "pnl_per_trade": float(np.sum(realized_pnl) / n_trades) if n_trades > 0 else 0.0,
+            "win_rate": float(win_rate),
+            "avg_risk_adj_ev": float(np.mean(risk_adj_ev[trade_mask])) if n_trades > 0 else 0.0,
+            "max_drawdown": max_drawdown,
+        }
     # Rolling expanding window: train on years[0..i], test on years[i+1..i+test_years]
     for i in range(min_train_years - 1, len(years) - test_years):
         train_end_year = years[i]
@@ -151,29 +206,53 @@ def run_walk_forward(
         if len(np.unique(y_test)) < 2:
             continue  # Can't compute AUC if only one class in test fold
 
-        # Scale
+        # Split training into fit/calibration (chronological) to avoid leakage.
+        cal_start = int(len(X_train) * 0.8)
+        if len(X_train) - cal_start < 50:
+            cal_start = max(1, len(X_train) - 50)
+        if cal_start < 100:
+            cal_start = max(1, int(len(X_train) * 0.9))
+
+        X_fit = X_train[:cal_start]
+        y_fit = y_train[:cal_start]
+        X_cal = X_train[cal_start:]
+        y_cal = y_train[cal_start:]
+
+        # Scale from model-fit data only.
         scaler = StandardScaler()
-        X_train_s = scaler.fit_transform(X_train)
+        X_fit_s = scaler.fit_transform(X_fit)
+        X_cal_s = scaler.transform(X_cal) if len(X_cal) > 0 else np.empty((0, X_fit_s.shape[1]))
         X_test_s = scaler.transform(X_test)
 
-        # Class weight
-        neg = (y_train == 0).sum()
-        pos = (y_train == 1).sum()
+        # Class weight (based on fit split only).
+        neg = (y_fit == 0).sum()
+        pos = (y_fit == 1).sum()
         params = dict(XGB_PARAMS)
         params["scale_pos_weight"] = neg / pos if pos > 0 else 1.0
 
         model = xgb.XGBClassifier(**params)
-        model.fit(X_train_s, y_train, verbose=False)
+        model.fit(X_fit_s, y_fit, verbose=False)
 
-        # Calibrate on test set (prefit — uses test as calibration data)
-        cal = CalibratedClassifierCV(FrozenEstimator(model), method="isotonic")
-        cal.fit(X_test_s, y_test)
-
-        y_prob = cal.predict_proba(X_test_s)[:, 1]
-        y_pred = cal.predict(X_test_s)
+        # Calibrate on held-out training tail only (never on test fold).
+        can_calibrate = len(X_cal_s) >= 50 and len(np.unique(y_cal)) > 1
+        if can_calibrate:
+            cal = CalibratedClassifierCV(FrozenEstimator(model), method="isotonic")
+            cal.fit(X_cal_s, y_cal)
+            y_prob = cal.predict_proba(X_test_s)[:, 1]
+            y_pred = cal.predict(X_test_s)
+        else:
+            y_prob = model.predict_proba(X_test_s)[:, 1]
+            y_pred = model.predict(X_test_s)
 
         auc = roc_auc_score(y_test, y_prob)
         acc = accuracy_score(y_test, y_pred)
+        if "Close" in df.columns:
+            prices_test = df.loc[test_mask, "Close"].values
+        else:
+            # get_training_data() drops raw OHLC columns; use nominal notional.
+            prices_test = np.full(len(y_test), 100.0)
+        atr_test = df.loc[test_mask, "ATR_Pct"].values if "ATR_Pct" in df.columns else np.zeros(len(y_test))
+        policy = _policy_metrics(y_test, y_prob, prices_test, atr_test)
 
         pos_rate = y_test.mean()
 
@@ -186,13 +265,21 @@ def run_walk_forward(
             "positive_rate": pos_rate,
             "roc_auc": auc,
             "accuracy": acc,
+            "n_trades": policy["n_trades"],
+            "trade_rate": policy["trade_rate"],
+            "pnl_per_trade": policy["pnl_per_trade"],
+            "total_pnl": policy["total_pnl"],
+            "policy_win_rate": policy["win_rate"],
+            "policy_ev": policy["avg_risk_adj_ev"],
+            "policy_max_dd": policy["max_drawdown"],
         })
 
         print(
             f"  Fold {fold_results[-1]['fold']:>2}  "
             f"train≤{train_end_year}  test={fold_results[-1]['test_year']}  "
             f"n_train={len(X_train):>5}  n_test={len(X_test):>4}  "
-            f"AUC={auc:.4f}  Acc={acc:.4f}  pos={pos_rate:.1%}"
+            f"AUC={auc:.4f}  Acc={acc:.4f}  pos={pos_rate:.1%}  "
+            f"trades={policy['n_trades']:>3}  pnl/trade={policy['pnl_per_trade']:+.3f}"
         )
 
     return {
@@ -203,6 +290,11 @@ def run_walk_forward(
         "std_auc": float(np.std([f["roc_auc"] for f in fold_results])) if fold_results else 0.0,
         "min_auc": float(np.min([f["roc_auc"] for f in fold_results])) if fold_results else 0.0,
         "max_auc": float(np.max([f["roc_auc"] for f in fold_results])) if fold_results else 0.0,
+        "mean_policy_pnl_per_trade": float(np.mean([f["pnl_per_trade"] for f in fold_results])) if fold_results else 0.0,
+        "mean_policy_trade_rate": float(np.mean([f["trade_rate"] for f in fold_results])) if fold_results else 0.0,
+        "mean_policy_win_rate": float(np.mean([f["policy_win_rate"] for f in fold_results])) if fold_results else 0.0,
+        "total_policy_pnl": float(np.sum([f["total_pnl"] for f in fold_results])) if fold_results else 0.0,
+        "worst_policy_max_dd": float(np.max([f["policy_max_dd"] for f in fold_results])) if fold_results else 0.0,
         "trend": _compute_trend([f["roc_auc"] for f in fold_results]),
     }
 
@@ -226,19 +318,25 @@ def print_summary(all_results: list[dict]) -> None:
     print(f"\n{'='*80}")
     print("WALK-FORWARD VALIDATION SUMMARY")
     print("="*80)
-    print(f"\n{'Group':<15} {'Threshold':<18} {'Mean AUC':>10} {'Std AUC':>9} {'Min AUC':>9} {'Max AUC':>9}  {'Trend'}")
-    print("-" * 90)
+    print(
+        f"\n{'Group':<15} {'Threshold':<18} {'Mean AUC':>10} {'Std AUC':>9} "
+        f"{'PnL/Trade':>10} {'Trade%':>8} {'Win%':>8} {'TotalPnL':>10} {'Trend'}"
+    )
+    print("-" * 122)
     for r in all_results:
         if not r.get("folds"):
             continue
         print(
             f"{r['group']:<15} {r['threshold']:<17}  "
             f"{r['mean_auc']:>9.4f}  {r['std_auc']:>8.4f}  "
-            f"{r['min_auc']:>8.4f}  {r['max_auc']:>8.4f}   {r['trend']}"
+            f"{r['mean_policy_pnl_per_trade']:>+9.3f} {r['mean_policy_trade_rate']*100:>7.1f}% "
+            f"{r['mean_policy_win_rate']*100:>7.1f}% {r['total_policy_pnl']:>+9.2f}  {r['trend']}"
         )
 
     print("\nInterpretation:")
     print("  AUC > 0.65 = good predictive power")
+    print("  PnL/Trade  = realized backtest utility under EV policy proxy")
+    print("  Trade%     = how selective the policy is")
     print("  Std AUC    = stability (< 0.05 = stable across market regimes)")
     print("  Trend      = is performance improving or degrading over time?")
     print("  If mean_auc >> min_auc, the model is overfit to certain regimes")

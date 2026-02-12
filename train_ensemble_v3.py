@@ -239,22 +239,19 @@ class EnsembleTimingTrainer:
         # Exponential recency sample weights
         sample_weights = self._compute_sample_weights(df_slice)
 
-        # Scale features (fit on full slice, used for final models)
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        self.scalers[model_key] = scaler
-
         neg = (y == 0).sum()
         pos = (y == 1).sum()
         spw = neg / pos if pos > 0 else 1.0
 
-        # Meta-feature column indices in X
+        # Meta-feature column indices in raw X
         meta_idx = self._get_meta_feature_indices(self.feature_cols)
 
         # 5-fold time-series OOF
         tscv = TimeSeriesSplit(n_splits=N_META_FOLDS)
         oof_xgb = np.zeros(len(X))
         oof_lgbm = np.zeros(len(X))
+        oof_meta = [np.zeros(len(X)) for _ in meta_idx]
+        valid_oof_mask = np.zeros(len(X), dtype=bool)
         oof_aucs = []
 
         device = 'cuda' if self.use_gpu else 'cpu'
@@ -262,12 +259,17 @@ class EnsembleTimingTrainer:
         t_slice_start = time.time()
         print(f"  [{model_key}] OOF folds:", end=' ', flush=True)
         for fold_idx, (tr_idx, val_idx) in enumerate(tscv.split(X)):
-            X_tr, X_val = X_scaled[tr_idx], X_scaled[val_idx]
+            # Fold-local scaling prevents leakage from future validation rows.
+            fold_scaler = StandardScaler()
+            X_tr = fold_scaler.fit_transform(X[tr_idx])
+            X_val = fold_scaler.transform(X[val_idx])
             y_tr, y_val = y[tr_idx], y[val_idx]
             sw_tr = sample_weights[tr_idx]
 
             if len(np.unique(y_val)) < 2:
                 continue
+
+            valid_oof_mask[val_idx] = True
 
             # XGBoost
             xgb_model = xgb.XGBClassifier(**self._xgb_params(model_key, spw))
@@ -281,6 +283,11 @@ class EnsembleTimingTrainer:
                 oof_lgbm[val_idx] = lgbm_model.predict_proba(X_val)[:, 1]
             else:
                 oof_lgbm[val_idx] = oof_xgb[val_idx]  # fallback: duplicate XGB
+
+            # Meta side-features use raw values to match inference path.
+            for j, idx in enumerate(meta_idx):
+                if idx >= 0:
+                    oof_meta[j][val_idx] = X[val_idx, idx]
 
             # Per-fold AUC (ensemble average)
             fold_prob = (oof_xgb[val_idx] + oof_lgbm[val_idx]) / 2.0
@@ -296,18 +303,22 @@ class EnsembleTimingTrainer:
         meta_cols_data = []
         meta_cols_data.append(oof_xgb.reshape(-1, 1))
         meta_cols_data.append(oof_lgbm.reshape(-1, 1))
-        for idx in meta_idx:
-            if idx >= 0:
-                meta_cols_data.append(X_scaled[:, idx].reshape(-1, 1))
-            else:
-                meta_cols_data.append(np.zeros((len(X), 1)))
+        for col in oof_meta:
+            meta_cols_data.append(col.reshape(-1, 1))
 
         meta_X = np.hstack(meta_cols_data)
+        meta_fit_mask = valid_oof_mask
+        if meta_fit_mask.sum() < 200:
+            raise RuntimeError(f"[{model_key}] Not enough OOF rows to fit meta-learner: {meta_fit_mask.sum()}")
         meta_learner = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
-        meta_learner.fit(meta_X, y)
+        meta_learner.fit(meta_X[meta_fit_mask], y[meta_fit_mask])
         self.meta_learners[model_key] = meta_learner
 
-        # Train final base learners on full slice
+        # Train final base learners on full slice (with a full-data scaler for inference).
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        self.scalers[model_key] = scaler
+
         print(f"  [{model_key}] Training final base learners on full data...", flush=True)
         final_xgb = xgb.XGBClassifier(**self._xgb_params(model_key, spw))
         final_xgb.fit(X_scaled, y, sample_weight=sample_weights, verbose=False)

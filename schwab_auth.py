@@ -15,7 +15,9 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'schwab_config.json')
 
 
 def load_config():
-    """Load configuration from file"""
+    """Load configuration from file, returns empty dict if file is missing."""
+    if not os.path.exists(CONFIG_FILE):
+        return {}
     with open(CONFIG_FILE, 'r') as f:
         return json.load(f)
 

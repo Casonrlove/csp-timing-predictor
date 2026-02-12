@@ -39,6 +39,11 @@ feature_importance*.png
 .vscode/
 .idea/
 
+# Claude Code internals
+.claude/
+.claude.json
+.claude.backup/
+
 # OS
 .DS_Store
 Thumbs.db
