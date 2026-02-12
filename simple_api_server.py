@@ -546,9 +546,10 @@ def predict(request: PredictionRequest):
     try:
         ticker = request.ticker.upper()
 
-        # Collect data and features — 18mo is sufficient for inference (longest
+        # Collect data and features — 2y is sufficient for inference (longest
         # rolling window is 252 trading days); 10y is only needed for training.
-        collector = CSPDataCollector(ticker, period='18mo')
+        # Note: Schwab only accepts periodType=year with values [1,2,3,5,10].
+        collector = CSPDataCollector(ticker, period='2y')
         collector.fetch_data()
         collector.calculate_technical_indicators()
         collector.create_target_variable(forward_days=35, strike_otm_pct=0.05)
