@@ -10,7 +10,12 @@ from typing import List, Optional
 import uvicorn
 import joblib
 import os
+import warnings
+import numpy as np
 from datetime import datetime, timedelta
+
+# Suppress LightGBM v4 feature-name mismatch warning (cosmetic, not a correctness issue)
+warnings.filterwarnings('ignore', message='.*feature names.*', category=UserWarning)
 from data_collector import CSPDataCollector
 from options_analyzer import get_best_csp_option
 from options_analyzer_multi import get_all_csp_options
@@ -91,6 +96,8 @@ MODEL = None
 SCALER = None
 FEATURE_NAMES = None
 LSTM_GENERATOR = None
+PROB_CALIBRATOR = None
+PROB_CALIBRATION_METHOD = None
 
 # Per-ticker model components
 TIMING_MODELS = None
@@ -99,7 +106,59 @@ TIMING_THRESHOLDS = None
 TIMING_GROUP_MAPPING = None
 PER_TICKER_MODE = False
 
-# Try per-ticker model first (preferred)
+# Ensemble V3 components (loaded preferentially over per-ticker model)
+ENSEMBLE_MODE = False
+ENSEMBLE_BASE_MODELS = None    # {'{group}_{regime}': {'xgb': ..., 'lgbm': ...}}
+ENSEMBLE_META_LEARNERS = None  # {'{group}_{regime}': LogisticRegression}
+ENSEMBLE_SCALERS = None
+ENSEMBLE_THRESHOLDS = None
+ENSEMBLE_GROUP_MAPPING = None
+ENSEMBLE_VIX_BOUNDARY = 18.0
+ENSEMBLE_FEATURE_COLS = None
+
+# Try ensemble model first (highest priority)
+ensemble_path = 'csp_timing_ensemble.pkl'
+if os.path.exists(ensemble_path):
+    try:
+        print(f"Loading ensemble model from {ensemble_path}...")
+        ens_data = joblib.load(ensemble_path)
+        if ens_data.get('ensemble'):
+            ENSEMBLE_BASE_MODELS = ens_data['base_models']
+            ENSEMBLE_META_LEARNERS = ens_data['meta_learners']
+            ENSEMBLE_SCALERS = ens_data['scalers']
+            ENSEMBLE_THRESHOLDS = ens_data['thresholds']
+            ENSEMBLE_GROUP_MAPPING = ens_data['group_mapping']
+            ENSEMBLE_VIX_BOUNDARY = ens_data.get('vix_boundary', 18.0)
+            ENSEMBLE_FEATURE_COLS = ens_data['feature_cols']
+            FEATURE_NAMES = ENSEMBLE_FEATURE_COLS
+            ENSEMBLE_MODE = True
+            MODEL_PATH = ensemble_path
+            print(f"✓ Ensemble V3 loaded: {sorted(ENSEMBLE_BASE_MODELS.keys())}")
+    except Exception as e:
+        print(f"⚠ Failed to load ensemble: {e}")
+        ENSEMBLE_MODE = False
+
+# Try v3 regime model next
+if not ENSEMBLE_MODE:
+    v3_path = 'csp_timing_model_v3.pkl'
+    if os.path.exists(v3_path):
+        try:
+            print(f"Loading V3 regime model from {v3_path}...")
+            v3_data = joblib.load(v3_path)
+            if v3_data.get('regime_models'):
+                TIMING_MODELS = v3_data['models']
+                TIMING_SCALERS = v3_data['scalers']
+                TIMING_THRESHOLDS = v3_data['thresholds']
+                TIMING_GROUP_MAPPING = v3_data['group_mapping']
+                FEATURE_NAMES = v3_data['feature_cols']
+                ENSEMBLE_VIX_BOUNDARY = v3_data.get('vix_boundary', 18.0)
+                PER_TICKER_MODE = True
+                MODEL_PATH = v3_path
+                print(f"✓ V3 regime models loaded: {sorted(TIMING_MODELS.keys())}")
+        except Exception as e:
+            print(f"⚠ Failed to load V3 model: {e}")
+
+# Try per-ticker model next (preferred over global)
 per_ticker_path = 'csp_timing_model_per_ticker.pkl'
 if os.path.exists(per_ticker_path):
     try:
@@ -135,6 +194,20 @@ if not PER_TICKER_MODE:
 
 if MODEL is None and not PER_TICKER_MODE:
     print("ERROR: No trained model found!")
+
+# Optional probability calibrator trained from settled prediction logs.
+calibrator_path = 'timing_probability_calibrator.pkl'
+if os.path.exists(calibrator_path):
+    try:
+        cal_data = joblib.load(calibrator_path)
+        PROB_CALIBRATOR = cal_data.get('calibrator')
+        PROB_CALIBRATION_METHOD = cal_data.get('method')
+        if PROB_CALIBRATOR is not None:
+            print(f"✓ Probability calibrator loaded ({PROB_CALIBRATION_METHOD})")
+    except Exception as e:
+        print(f"⚠ Failed to load probability calibrator: {e}")
+        PROB_CALIBRATOR = None
+        PROB_CALIBRATION_METHOD = None
 
 # Load LSTM model if it exists and features require it
 LSTM_FEATURES = ['LSTM_Return_5D', 'LSTM_Return_10D', 'LSTM_Direction_Prob']
@@ -199,6 +272,52 @@ if STRIKE_PROB_MODEL is None:
     print(f"⚠ No strike probability model available")
 
 
+def apply_probability_calibration(raw_p_safe: float) -> float:
+    """
+    Apply optional post-hoc probability calibration to p_safe.
+    Falls back to raw probability when no calibrator is available.
+    """
+    if PROB_CALIBRATOR is None:
+        return float(np.clip(raw_p_safe, 0.001, 0.999))
+
+    try:
+        if PROB_CALIBRATION_METHOD == 'isotonic':
+            calibrated = float(PROB_CALIBRATOR.predict([raw_p_safe])[0])
+        elif PROB_CALIBRATION_METHOD == 'platt':
+            calibrated = float(PROB_CALIBRATOR.predict_proba([[raw_p_safe]])[0, 1])
+        else:
+            calibrated = raw_p_safe
+        return float(np.clip(calibrated, 0.001, 0.999))
+    except Exception as e:
+        print(f"[Calibration] Failed to apply calibrator: {e}")
+        return float(np.clip(raw_p_safe, 0.001, 0.999))
+
+
+def prepare_inference_features(df, feature_names):
+    """
+    Align live data to training feature contract.
+    Returns aligned feature DataFrame and parity diagnostics.
+    """
+    if feature_names is None:
+        raise ValueError("Feature names not loaded")
+
+    aligned = df.copy()
+    missing = [c for c in feature_names if c not in aligned.columns]
+    for col in missing:
+        aligned[col] = 0.0
+
+    extra = [c for c in aligned.columns if c not in feature_names]
+    features_df = aligned[feature_names].copy()
+    features_df = features_df.replace([np.inf, -np.inf], np.nan).ffill().fillna(0.0)
+
+    parity = {
+        "missing_features": missing,
+        "missing_count": len(missing),
+        "extra_count": len(extra),
+    }
+    return features_df, parity
+
+
 @app.get("/")
 def read_root():
     """Health check"""
@@ -244,8 +363,35 @@ def reload_model():
     """Reload the model from disk without restarting the server"""
     global MODEL, SCALER, FEATURE_NAMES, MODEL_PATH
     global TIMING_MODELS, TIMING_SCALERS, TIMING_THRESHOLDS, TIMING_GROUP_MAPPING, PER_TICKER_MODE
+    global ENSEMBLE_MODE, ENSEMBLE_BASE_MODELS, ENSEMBLE_META_LEARNERS
+    global ENSEMBLE_SCALERS, ENSEMBLE_THRESHOLDS, ENSEMBLE_GROUP_MAPPING, ENSEMBLE_FEATURE_COLS
 
-    # Try per-ticker model first
+    # Try ensemble first (highest priority)
+    ensemble_path = 'csp_timing_ensemble.pkl'
+    if os.path.exists(ensemble_path):
+        try:
+            ens_data = joblib.load(ensemble_path)
+            if ens_data.get('ensemble'):
+                ENSEMBLE_BASE_MODELS = ens_data['base_models']
+                ENSEMBLE_META_LEARNERS = ens_data['meta_learners']
+                ENSEMBLE_SCALERS = ens_data['scalers']
+                ENSEMBLE_THRESHOLDS = ens_data['thresholds']
+                ENSEMBLE_GROUP_MAPPING = ens_data['group_mapping']
+                ENSEMBLE_FEATURE_COLS = ens_data['feature_cols']
+                FEATURE_NAMES = ENSEMBLE_FEATURE_COLS
+                ENSEMBLE_MODE = True
+                MODEL_PATH = ensemble_path
+                return {
+                    "status": "success",
+                    "message": f"Ensemble V3 reloaded from {ensemble_path}",
+                    "model_type": "Ensemble V3 (XGB+LGBM+Meta)",
+                    "keys": sorted(ENSEMBLE_BASE_MODELS.keys()),
+                    "timestamp": datetime.now().isoformat()
+                }
+        except Exception as e:
+            print(f"⚠ Failed to reload ensemble: {e}")
+
+    # Try per-ticker model next
     per_ticker_path = 'csp_timing_model_per_ticker.pkl'
     if os.path.exists(per_ticker_path):
         try:
@@ -394,14 +540,15 @@ def market_status():
 @app.post("/predict", response_model=PredictionResponse)
 def predict(request: PredictionRequest):
     """Make CSP timing prediction for a single ticker"""
-    if MODEL is None and not PER_TICKER_MODE:
+    if MODEL is None and not PER_TICKER_MODE and not ENSEMBLE_MODE:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
     try:
         ticker = request.ticker.upper()
 
-        # Collect data and features
-        collector = CSPDataCollector(ticker, period='10y')
+        # Collect data and features — 18mo is sufficient for inference (longest
+        # rolling window is 252 trading days); 10y is only needed for training.
+        collector = CSPDataCollector(ticker, period='18mo')
         collector.fetch_data()
         collector.calculate_technical_indicators()
         collector.create_target_variable(forward_days=35, strike_otm_pct=0.05)
@@ -420,7 +567,9 @@ def predict(request: PredictionRequest):
                     if col not in collector.data.columns:
                         collector.data[col] = 0.0
 
-        features_df = collector.data[FEATURE_NAMES].copy()
+        features_df, feature_parity = prepare_inference_features(collector.data, FEATURE_NAMES)
+        if feature_parity["missing_count"] > 0:
+            print(f"[FeatureParity] {ticker}: {feature_parity['missing_count']} missing features filled with 0")
 
         if len(features_df) == 0:
             raise HTTPException(status_code=400, detail=f"No data available for {ticker}")
@@ -428,29 +577,86 @@ def predict(request: PredictionRequest):
         # Get most recent features
         X_current = features_df.iloc[-1:].values
 
-        # Use per-ticker model if available
-        if PER_TICKER_MODE:
-            # Get ticker's group
-            group = TIMING_GROUP_MAPPING.get(ticker, 'tech_growth')  # Default to tech_growth
-            model = TIMING_MODELS[group]
-            scaler = TIMING_SCALERS[group]
-            threshold = TIMING_THRESHOLDS[group]
-            print(f"[Per-Ticker] Using {group} model for {ticker} (threshold: {threshold:+.1f}%)")
+        # Determine VIX regime from current data
+        current_vix = float(features_df.iloc[-1].get('VIX', 15.0))
+        vix_regime = 'low_vix' if current_vix < ENSEMBLE_VIX_BOUNDARY else 'high_vix'
+
+        # ---- Ensemble V3 dispatch (highest priority) ----
+        if ENSEMBLE_MODE:
+            group = ENSEMBLE_GROUP_MAPPING.get(ticker, 'tech_growth')
+            model_key = f'{group}_{vix_regime}'
+            # Fallback to combined group key if regime key not found
+            if model_key not in ENSEMBLE_SCALERS:
+                # Try the other regime
+                alt_key = f'{group}_low_vix' if vix_regime == 'high_vix' else f'{group}_high_vix'
+                model_key = alt_key if alt_key in ENSEMBLE_SCALERS else group
+
+            scaler = ENSEMBLE_SCALERS[model_key]
+            base = ENSEMBLE_BASE_MODELS[model_key]
+            meta = ENSEMBLE_META_LEARNERS[model_key]
+            threshold = ENSEMBLE_THRESHOLDS.get(model_key, -5.0)
+
+            X_scaled = scaler.transform(X_current)
+            xgb_prob = base['xgb'].predict_proba(X_scaled)[0, 1]
+            lgbm_prob = base['lgbm'].predict_proba(X_scaled)[0, 1] if base.get('lgbm') else xgb_prob
+
+            # Build meta-features [xgb_prob, lgbm_prob, VIX, VIX_Rank, Regime_Trend]
+            import numpy as _np
+            fc = ENSEMBLE_FEATURE_COLS
+            def _get_feat(name, default=0.0):
+                return float(X_current[0, fc.index(name)] if name in fc else default)
+
+            meta_X = _np.array([[
+                xgb_prob, lgbm_prob,
+                _get_feat('VIX', 15.0),
+                _get_feat('VIX_Rank', 50.0),
+                _get_feat('Regime_Trend', 1.0),
+            ]])
+            p_safe = float(meta.predict_proba(meta_X)[0, 1])
+            p_downside = 1.0 - p_safe
+            prediction = int(p_safe >= 0.5)
+            model_type = f"Ensemble V3 ({group}/{vix_regime})"
+            print(f"[Ensemble] {ticker} → {group}/{vix_regime}  "
+                  f"xgb={xgb_prob:.3f} lgbm={lgbm_prob:.3f} meta={p_safe:.3f}")
+
+        # ---- Per-ticker V3 regime model ----
+        elif PER_TICKER_MODE:
+            group = TIMING_GROUP_MAPPING.get(ticker, 'tech_growth')
+            # Try regime-specific key first, fall back to plain group
+            regime_key = f'{group}_{vix_regime}'
+            if TIMING_MODELS and regime_key in TIMING_MODELS:
+                model_key = regime_key
+            else:
+                model_key = group
+            model = TIMING_MODELS[model_key]
+            scaler = TIMING_SCALERS[model_key]
+            threshold = TIMING_THRESHOLDS.get(model_key, TIMING_THRESHOLDS.get(group, -5.0))
+            print(f"[Per-Ticker] {ticker} → {model_key} (threshold: {threshold:+.1f}%)")
+
+            X_scaled = scaler.transform(X_current)
+            prediction = int(model.predict(X_scaled)[0])
+            probabilities = model.predict_proba(X_scaled)[0]
+            p_safe = float(probabilities[1])
+            p_downside = float(probabilities[0])
+            model_type = f"{type(model).__name__} (Per-Ticker: {model_key})"
+
         else:
-            # Use global model
+            # Use global model (legacy fallback)
             model = MODEL
             scaler = SCALER
+            group = 'global'
             print(f"[Global] Using global model for {ticker}")
+            X_scaled = scaler.transform(X_current)
+            prediction = int(model.predict(X_scaled)[0])
+            probabilities = model.predict_proba(X_scaled)[0]
+            p_safe = float(probabilities[1])
+            p_downside = float(probabilities[0])
+            model_type = type(MODEL).__name__
 
-        X_scaled = scaler.transform(X_current)
-
-        # Make prediction
-        prediction = model.predict(X_scaled)[0]
-        probabilities = model.predict_proba(X_scaled)[0]
-
-        # Calculate CSP metrics early (needed for trade gating)
-        p_safe = float(probabilities[1])
-        p_downside = float(probabilities[0])
+        # Apply optional temporal probability calibration from settled logs.
+        p_safe_raw = float(p_safe)
+        p_safe = apply_probability_calibration(p_safe_raw)
+        p_downside = 1.0 - p_safe
         csp_score = p_safe - p_downside
 
         # Get current data - try Schwab first for real-time price
@@ -494,72 +700,119 @@ def predict(request: PredictionRequest):
 
             print(f"Found {len(all_options)} options via {options_source}")
 
-            # Calculate edge using strike-specific probability model
-            # This directly compares model P(breach) to market delta for each strike
+            # Calculate edge using strike-specific probability model.
+            # No heuristic fallback: if strike model is unavailable, edge is not estimated.
             use_strike_model = STRIKE_PROB_MODEL is not None and STRIKE_PROB_MODEL.model_loaded
 
             if use_strike_model:
                 print("[Edge] Using strike-specific probability model")
             else:
-                print("[Edge] Strike model not available, using fallback")
-                # Fallback to old method
-                model_prob_bad = float(probabilities[0])
+                print("[Edge] Strike model not available - edge estimation disabled")
 
             for option in all_options:
                 market_delta = abs(option['delta'])
                 strike = option['strike']
+                premium = float(option.get('premium', 0.0) or 0.0)
+                bid = float(option.get('bid', 0.0) or 0.0)
+                ask = float(option.get('ask', 0.0) or 0.0)
 
                 # Calculate how far OTM this strike is (as percentage)
                 otm_pct = ((current_price - strike) / current_price) * 100
 
                 if use_strike_model:
                     # Use strike-specific probability model
-                    # V2 uses ticker for group-specific prediction, V1 just uses features
-                    if STRIKE_PROB_VERSION == 2:
-                        # V2: Use delta directly for prediction (more accurate)
+                    # V2/V3: use delta directly for prediction; V1 uses strike OTM percentage.
+                    if STRIKE_PROB_VERSION in (2, 3):
                         model_prob = STRIKE_PROB_MODEL.predict_for_delta(collector.data, market_delta, ticker)
                     else:
                         # V1: Use OTM percentage
                         model_prob = STRIKE_PROB_MODEL.predict_strike_probability(collector.data, otm_pct)
 
                     if model_prob is None:
-                        model_prob = market_delta  # Fallback to delta if model fails
+                        option['market_delta'] = round(market_delta, 3)
+                        option['model_prob_assignment'] = None
+                        option['edge'] = None
+                        option['edge_signal'] = 'NO_EDGE_ESTIMATE'
+                        option['is_suggested'] = False
+                        continue
+
+                    # Edge = Market Delta - Model Probability
+                    # Positive edge = market overpricing risk = good for selling
+                    edge = (market_delta - model_prob) * 100
+
+                    # EV model (per share) for CSP selection:
+                    # EV = premium - expected assignment loss - slippage
+                    spread = max(0.0, ask - bid)
+                    spread_pct = (spread / premium) if premium > 0 else 1.0
+                    slippage_cost = spread * 0.25  # assume one-quarter spread execution cost
+                    assignment_loss_pct = 0.05     # baseline loss magnitude if assigned
+                    expected_assignment_loss = model_prob * strike * assignment_loss_pct
+                    expected_value = premium - expected_assignment_loss - slippage_cost
+                    timing_multiplier = 0.75 + (0.5 * p_safe)  # soft timing prior, not hard gate
+                    risk_adjusted_ev = expected_value * timing_multiplier
+
+                    option['market_delta'] = round(market_delta, 3)
+                    option['model_prob_assignment'] = round(model_prob, 3)
+                    option['edge'] = round(edge, 2)
+                    option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
+                    option['spread_pct'] = round(spread_pct, 3)
+                    option['ev_per_share'] = round(expected_value, 4)
+                    option['ev_pct_of_strike'] = round((expected_value / strike) * 100, 3) if strike > 0 else None
+                    option['risk_adjusted_ev'] = round(risk_adjusted_ev, 4)
+                    option['is_suggested'] = False
                 else:
-                    # FALLBACK: Simple scaling based on 5% threshold prediction
-                    # Less accurate but works without strike model
-                    model_prob_bad = float(probabilities[0])
-                    scale_factor = otm_pct / 5.0  # Scale relative to 5% threshold
-                    model_prob = model_prob_bad * (1 / scale_factor) if scale_factor > 0 else model_prob_bad
-                    model_prob = max(0.01, min(0.99, model_prob))
+                    option['market_delta'] = round(market_delta, 3)
+                    option['model_prob_assignment'] = None
+                    option['edge'] = None
+                    option['edge_signal'] = 'NO_EDGE_MODEL'
+                    option['spread_pct'] = None
+                    option['ev_per_share'] = None
+                    option['ev_pct_of_strike'] = None
+                    option['risk_adjusted_ev'] = None
+                    option['is_suggested'] = False
 
-                # Edge = Market Delta - Model Probability
-                # Positive edge = market overpricing risk = good for selling
-                edge = (market_delta - model_prob) * 100
-
-                option['market_delta'] = round(market_delta, 3)
-                option['model_prob_assignment'] = round(model_prob, 3)
-                option['edge'] = round(edge, 2)
-                option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
-                option['is_suggested'] = False
-
-            # Select best option - require BOTH CSP Score > 0 AND positive edge
+            # Select best option via EV optimization with uncertainty no-trade band.
             if all_options:
-                # Gate 1: CSP Score must be positive (model favors safe outcome)
-                if csp_score <= 0:
+                if not use_strike_model:
                     options_data = None
-                    print(f"CSP Score {csp_score:.2f} <= 0 - no suggestion (model favors downside)")
+                    print("No calibrated edge model - EV ranking unavailable, no suggestion")
                 else:
-                    # Gate 2: Find option with best positive edge
-                    positive_edge_options = [opt for opt in all_options if opt.get('edge', 0) > 0]
-                    if positive_edge_options:
-                        best_edge_option = max(positive_edge_options, key=lambda x: x.get('edge', 0))
-                        best_edge_option['is_suggested'] = True
-                        options_data = best_edge_option
-                        print(f"Best Edge: ${best_edge_option['strike']} strike, Edge={best_edge_option['edge']:.1f}, CSP Score={csp_score:.2f}")
-                    else:
-                        # No positive edge - don't suggest any option
+                    timing_uncertain = abs(csp_score) < 0.15
+                    near_earnings = bool(current_data.get('Near_Earnings', False))
+                    days_to_earnings = float(current_data.get('Days_To_Earnings', 999))
+
+                    if timing_uncertain:
                         options_data = None
-                        print(f"CSP Score {csp_score:.2f} > 0 but no positive edge options - no suggestion")
+                        print(f"No-trade band: timing uncertainty (csp_score={csp_score:.3f})")
+                        print("Skipping suggestions due to low timing decisiveness")
+                    elif near_earnings and days_to_earnings <= 7:
+                        options_data = None
+                        print(f"No-trade band: earnings risk (days_to_earnings={days_to_earnings:.0f})")
+                        print("Skipping suggestions due to near-term earnings event risk")
+                    else:
+                        # Filter for executable contracts and positive risk-adjusted EV.
+                        ev_candidates = [
+                            opt for opt in all_options
+                            if opt.get('risk_adjusted_ev') is not None
+                            and opt['risk_adjusted_ev'] > 0
+                            and opt.get('spread_pct') is not None
+                            and opt['spread_pct'] <= 0.20
+                            and opt.get('edge') is not None
+                            and abs(opt['edge']) >= 1.0  # no-trade band for weak edge
+                        ]
+                        if ev_candidates:
+                            best_option = max(ev_candidates, key=lambda x: x.get('risk_adjusted_ev', -1e9))
+                            best_option['is_suggested'] = True
+                            options_data = best_option
+                            print(
+                                f"Best EV: ${best_option['strike']} strike, "
+                                f"EV/share={best_option['ev_per_share']:.3f}, "
+                                f"RiskAdjEV={best_option['risk_adjusted_ev']:.3f}, "
+                                f"Edge={best_option['edge']:.1f}"
+                            )
+                        else:
+                            options_data = None
+                            print("No options passed positive EV + liquidity filters - no suggestion")
             else:
                 options_data = None
             print(f"Options data prepared: {len(all_options)} total, returning top 5")
@@ -595,7 +848,17 @@ def predict(request: PredictionRequest):
             'earnings': {
                 'days_to_earnings': float(current_data.get('Days_To_Earnings', 999)),
                 'near_earnings': bool(current_data.get('Near_Earnings', False))
-            }
+            },
+            'vix_regime': {
+                'current_vix': round(current_vix, 2),
+                'regime': vix_regime,
+                'boundary': ENSEMBLE_VIX_BOUNDARY,
+            },
+            'feature_parity': {
+                'missing_count': feature_parity['missing_count'],
+                'missing_features_sample': feature_parity['missing_features'][:10],
+                'extra_count': feature_parity['extra_count'],
+            },
         }
 
         # Group options by monthly expiration and return next 2 monthlies
@@ -691,13 +954,7 @@ def predict(request: PredictionRequest):
         except Exception as log_err:
             print(f"Failed to log prediction: {log_err}")
 
-        # Determine model type string
-        if PER_TICKER_MODE:
-            model_type = f"{type(model).__name__} (Per-Ticker: {group})"
-        elif "multi" in MODEL_PATH:
-            model_type = f"{type(MODEL).__name__} (Multi-Ticker)"
-        else:
-            model_type = type(MODEL).__name__
+        # model_type is set above in the dispatch block
 
         return PredictionResponse(
             ticker=ticker,
