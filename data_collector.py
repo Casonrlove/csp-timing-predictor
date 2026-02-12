@@ -734,27 +734,22 @@ class CSPDataCollector:
             'Drawdown_From_52W_High', 'Consecutive_Down_Days',
             'Regime_Trend',
 
-            # Mean reversion features (NEW - 11 features)
-            'Recent_Drop_1D', 'Recent_Drop_3D', 'Recent_Drop_5D',
-            'RSI_Oversold', 'RSI_Extreme',
-            'Pullback_From_5D_High', 'Pullback_From_20D_High',
+            # Mean reversion features (8 features — pruned redundant ones)
+            'Recent_Drop_3D', 'Recent_Drop_5D',
+            'Pullback_From_5D_High',
             'Return_Acceleration',
             'Volume_Spike_Down',
             'Return_Mean_20D', 'Return_Std_20D', 'Return_ZScore',
 
-            # Regime & mean-reversion quality (NEW - 4 features)
+            # Regime & mean-reversion quality (2 features — pruned noisy ones)
             'Return_Autocorr_20D',   # Lag-1 autocorrelation: negative = mean-reverting
             'Variance_Ratio_5D',     # < 1 = mean-reverting, > 1 = trending
-            'Hurst_Exponent_60D',    # < 0.5 = mean-reverting regime
-            'VIX_Percentile_252D',   # More robust IV level than VIX_Rank
 
-            # Tier-1 new market-context features (8 features)
+            # Tier-1 market-context features (4 features — pruned VIX9D fallback noise)
             'Stock_vs_SPY_5D',       # A: Stock outperformance vs SPY (5D)
             'Stock_vs_SPY_20D',      # A: Stock outperformance vs SPY (20D)
             'Sector_RS_5D',          # B: Sector relative strength (5D)
             'Sector_RS_20D',         # B: Sector relative strength (20D)
-            'VIX9D_Ratio',           # C: VIX9D / VIX near-term fear ratio
-            'VIX9D_vs_SMA5',         # C: VIX9D deviation from 5D average
         ]
 
         # Check for NaN values before dropping

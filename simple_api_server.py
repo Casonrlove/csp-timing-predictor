@@ -120,6 +120,8 @@ PER_TICKER_MODE = False
 ENSEMBLE_MODE = False
 ENSEMBLE_BASE_MODELS = None    # {'{group}_{regime}': {'xgb': ..., 'lgbm': ...}}
 ENSEMBLE_META_LEARNERS = None  # {'{group}_{regime}': LogisticRegression}
+ENSEMBLE_META_SCALERS = None   # {'{group}_{regime}': StandardScaler for meta-features}
+ENSEMBLE_CALIBRATORS = None    # {'{group}_{regime}': CalibratedClassifierCV}
 ENSEMBLE_SCALERS = None
 ENSEMBLE_THRESHOLDS = None
 ENSEMBLE_GROUP_MAPPING = None
@@ -135,6 +137,8 @@ if os.path.exists(ensemble_path):
         if ens_data.get('ensemble'):
             ENSEMBLE_BASE_MODELS = ens_data['base_models']
             ENSEMBLE_META_LEARNERS = ens_data['meta_learners']
+            ENSEMBLE_META_SCALERS = ens_data.get('meta_scalers', {})
+            ENSEMBLE_CALIBRATORS = ens_data.get('calibrators', {})
             ENSEMBLE_SCALERS = ens_data['scalers']
             ENSEMBLE_THRESHOLDS = ens_data['thresholds']
             ENSEMBLE_GROUP_MAPPING = ens_data['group_mapping']
@@ -143,7 +147,10 @@ if os.path.exists(ensemble_path):
             FEATURE_NAMES = ENSEMBLE_FEATURE_COLS
             ENSEMBLE_MODE = True
             MODEL_PATH = ensemble_path
+            n_cal = len(ENSEMBLE_CALIBRATORS)
             print(f"✓ Ensemble V3 loaded: {sorted(ENSEMBLE_BASE_MODELS.keys())}")
+            if n_cal:
+                print(f"  Calibrators: {n_cal}, Meta-scalers: {len(ENSEMBLE_META_SCALERS)}")
     except Exception as e:
         print(f"⚠ Failed to load ensemble: {e}")
         ENSEMBLE_MODE = False
@@ -374,6 +381,7 @@ def reload_model():
     global MODEL, SCALER, FEATURE_NAMES, MODEL_PATH
     global TIMING_MODELS, TIMING_SCALERS, TIMING_THRESHOLDS, TIMING_GROUP_MAPPING, PER_TICKER_MODE
     global ENSEMBLE_MODE, ENSEMBLE_BASE_MODELS, ENSEMBLE_META_LEARNERS
+    global ENSEMBLE_META_SCALERS, ENSEMBLE_CALIBRATORS
     global ENSEMBLE_SCALERS, ENSEMBLE_THRESHOLDS, ENSEMBLE_GROUP_MAPPING, ENSEMBLE_FEATURE_COLS
 
     # Try ensemble first (highest priority)
@@ -384,6 +392,8 @@ def reload_model():
             if ens_data.get('ensemble'):
                 ENSEMBLE_BASE_MODELS = ens_data['base_models']
                 ENSEMBLE_META_LEARNERS = ens_data['meta_learners']
+                ENSEMBLE_META_SCALERS = ens_data.get('meta_scalers', {})
+                ENSEMBLE_CALIBRATORS = ens_data.get('calibrators', {})
                 ENSEMBLE_SCALERS = ens_data['scalers']
                 ENSEMBLE_THRESHOLDS = ens_data['thresholds']
                 ENSEMBLE_GROUP_MAPPING = ens_data['group_mapping']
@@ -623,7 +633,16 @@ def predict(request: PredictionRequest):
                 _get_feat('VIX_Rank', 50.0),
                 _get_feat('Regime_Trend', 1.0),
             ]])
-            p_safe = float(meta.predict_proba(meta_X)[0, 1])
+
+            # Apply meta-scaler if available (matches training)
+            if ENSEMBLE_META_SCALERS and model_key in ENSEMBLE_META_SCALERS:
+                meta_X = ENSEMBLE_META_SCALERS[model_key].transform(meta_X)
+
+            # Use calibrator if available, otherwise raw meta-learner
+            if ENSEMBLE_CALIBRATORS and model_key in ENSEMBLE_CALIBRATORS:
+                p_safe = float(ENSEMBLE_CALIBRATORS[model_key].predict_proba(meta_X)[0, 1])
+            else:
+                p_safe = float(meta.predict_proba(meta_X)[0, 1])
             p_downside = 1.0 - p_safe
             prediction = int(p_safe >= 0.5)
             model_type = f"Ensemble V3 ({group}/{vix_regime})"

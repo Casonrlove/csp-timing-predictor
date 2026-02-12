@@ -19,6 +19,8 @@ Usage:
 """
 
 import argparse
+import json
+import os
 import time
 import warnings
 
@@ -27,12 +29,20 @@ import pandas as pd
 import xgboost as xgb
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.frozen import FrozenEstimator
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
     roc_auc_score,
 )
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
+
+try:
+    import lightgbm as lgb
+    LGBM_AVAILABLE = True
+except ImportError:
+    LGBM_AVAILABLE = False
 
 from data_collector import CSPDataCollector
 from feature_utils import apply_rolling_threshold, calculate_group_threshold
@@ -47,10 +57,10 @@ TICKER_GROUPS = {
     "etf":         ["SPY", "QQQ", "IWM"],
 }
 
-# XGBoost params (mirrors training script; no GPU needed for validation)
-XGB_PARAMS = {
-    "n_estimators": 300,
-    "max_depth": 6,
+# Default params matching train_ensemble_v3.py
+DEFAULT_XGB_PARAMS = {
+    "n_estimators": 500,
+    "max_depth": 8,
     "learning_rate": 0.05,
     "subsample": 0.8,
     "colsample_bytree": 0.8,
@@ -63,6 +73,49 @@ XGB_PARAMS = {
     "tree_method": "hist",
     "n_jobs": -1,
 }
+
+DEFAULT_LGBM_PARAMS = {
+    "boosting_type": "dart",
+    "num_leaves": 63,
+    "min_child_samples": 20,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.7,
+    "bagging_fraction": 0.8,
+    "n_estimators": 500,
+    "verbose": -1,
+    "random_state": 42,
+    "n_jobs": -1,
+}
+
+VIX_BOUNDARY = 18.0
+MIN_REGIME_SAMPLES = 400
+N_META_FOLDS = 5
+RECENCY_HALFLIFE = 2.0
+
+META_FEATURE_NAMES = ["xgb_prob", "lgbm_prob", "VIX", "VIX_Rank", "Regime_Trend"]
+
+OPTUNA_PARAMS_FILE = "optuna_params_v3.json"
+
+
+def _load_optuna_params() -> dict:
+    """Load Optuna-tuned hyperparameters if available."""
+    if os.path.exists(OPTUNA_PARAMS_FILE):
+        try:
+            with open(OPTUNA_PARAMS_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _compute_sample_weights(df_slice: pd.DataFrame, halflife: float = RECENCY_HALFLIFE) -> np.ndarray:
+    """Exponential recency weighting."""
+    if halflife <= 0:
+        return np.ones(len(df_slice))
+    dates = pd.to_datetime(df_slice.index)
+    days_ago = (dates.max() - dates).days.values
+    halflife_days = halflife * 365.25
+    return np.exp(-np.log(2) * days_ago / halflife_days)
 
 
 def collect_group_data(group_name: str, tickers: list[str], period: str = "10y") -> tuple[pd.DataFrame | None, list[str] | None]:
@@ -101,6 +154,8 @@ def run_walk_forward(
     min_train_years: int = 4,
     test_years: int = 1,
     use_rolling_threshold: bool = True,
+    rolling_window: int = 5,
+    simple_mode: bool = False,
 ) -> dict:
     """
     Run walk-forward validation on a pre-collected group DataFrame.
@@ -187,80 +242,224 @@ def run_walk_forward(
             "avg_risk_adj_ev": float(np.mean(risk_adj_ev[trade_mask])) if n_trades > 0 else 0.0,
             "max_drawdown": max_drawdown,
         }
-    # Rolling expanding window: train on years[0..i], test on years[i+1..i+test_years]
+    # Load Optuna params if available
+    optuna_params = _load_optuna_params()
+
+    # Walk-forward: train on rolling (or expanding) window, test on next year(s)
     for i in range(min_train_years - 1, len(years) - test_years):
         train_end_year = years[i]
         test_start_year = years[i + 1]
         test_end_year = years[min(i + test_years, len(years) - 1)]
 
-        train_mask = df.index.year <= train_end_year
+        if rolling_window > 0:
+            rolling_start = max(years[0], train_end_year - rolling_window + 1)
+            train_mask = (df.index.year >= rolling_start) & (df.index.year <= train_end_year)
+        else:
+            train_mask = df.index.year <= train_end_year
         test_mask = (df.index.year >= test_start_year) & (df.index.year <= test_end_year)
 
-        X_train = df.loc[train_mask, feature_cols].values
-        y_train = df.loc[train_mask, "target"].values
-        X_test = df.loc[test_mask, feature_cols].values
-        y_test = df.loc[test_mask, "target"].values
+        df_train = df.loc[train_mask]
+        df_test = df.loc[test_mask]
+        X_test = df_test[feature_cols].values
+        y_test = df_test["target"].values
 
-        if len(X_train) < 200 or len(X_test) < 50:
+        if len(df_train) < 200 or len(X_test) < 50:
             continue
         if len(np.unique(y_test)) < 2:
-            continue  # Can't compute AUC if only one class in test fold
+            continue
 
-        # Split training into fit/calibration (chronological) to avoid leakage.
-        cal_start = int(len(X_train) * 0.8)
-        if len(X_train) - cal_start < 50:
-            cal_start = max(1, len(X_train) - 50)
-        if cal_start < 100:
-            cal_start = max(1, int(len(X_train) * 0.9))
+        if simple_mode:
+            # ---- SIMPLE MODE: Single XGBoost + isotonic calibration (Round 2 style) ----
+            X_train = df_train[feature_cols].values
+            y_train = df_train["target"].values
+            sw = _compute_sample_weights(df_train)
+            neg = (y_train == 0).sum()
+            pos = (y_train == 1).sum()
+            spw = neg / pos if pos > 0 else 1.0
 
-        X_fit = X_train[:cal_start]
-        y_fit = y_train[:cal_start]
-        X_cal = X_train[cal_start:]
-        y_cal = y_train[cal_start:]
+            simple_params = {
+                "n_estimators": 300,
+                "max_depth": 6,
+                "learning_rate": 0.05,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+                "min_child_weight": 3,
+                "gamma": 0.1,
+                "reg_alpha": 0.1,
+                "reg_lambda": 1.0,
+                "scale_pos_weight": spw,
+                "random_state": 42,
+                "eval_metric": "auc",
+                "tree_method": "hist",
+                "n_jobs": -1,
+            }
 
-        # Scale from model-fit data only.
-        scaler = StandardScaler()
-        X_fit_s = scaler.fit_transform(X_fit)
-        X_cal_s = scaler.transform(X_cal) if len(X_cal) > 0 else np.empty((0, X_fit_s.shape[1]))
-        X_test_s = scaler.transform(X_test)
+            model = xgb.XGBClassifier(**simple_params)
+            model.fit(X_train, y_train, sample_weight=sw, verbose=False)
 
-        # Class weight (based on fit split only).
-        neg = (y_fit == 0).sum()
-        pos = (y_fit == 1).sum()
-        params = dict(XGB_PARAMS)
-        params["scale_pos_weight"] = neg / pos if pos > 0 else 1.0
+            # Isotonic calibration using held-out tail of training data
+            cal_start = int(len(X_train) * 0.8)
+            cal_X = X_train[cal_start:]
+            cal_y = y_train[cal_start:]
+            if len(cal_X) >= 50 and len(np.unique(cal_y)) > 1:
+                cal = CalibratedClassifierCV(FrozenEstimator(model), method="isotonic")
+                cal.fit(cal_X, cal_y)
+                y_prob = cal.predict_proba(X_test)[:, 1]
+            else:
+                y_prob = model.predict_proba(X_test)[:, 1]
 
-        model = xgb.XGBClassifier(**params)
-        model.fit(X_fit_s, y_fit, verbose=False)
-
-        # Calibrate on held-out training tail only (never on test fold).
-        can_calibrate = len(X_cal_s) >= 50 and len(np.unique(y_cal)) > 1
-        if can_calibrate:
-            cal = CalibratedClassifierCV(FrozenEstimator(model), method="isotonic")
-            cal.fit(X_cal_s, y_cal)
-            y_prob = cal.predict_proba(X_test_s)[:, 1]
-            y_pred = cal.predict(X_test_s)
         else:
-            y_prob = model.predict_proba(X_test_s)[:, 1]
-            y_pred = model.predict(X_test_s)
+            # ---- ENSEMBLE MODE: Full XGB+LGBM stacking (Round 3 style) ----
+            # Split training by VIX regime
+            regime_models = {}  # {regime: {'xgb', 'lgbm', 'meta', 'meta_scaler', 'scaler'}}
 
+            for regime, regime_df in [
+                ("low_vix", df_train[df_train["VIX"] < VIX_BOUNDARY]),
+                ("high_vix", df_train[df_train["VIX"] >= VIX_BOUNDARY]),
+            ]:
+                rdf = regime_df.copy()
+                # Fallback to full training data if regime slice is too small
+                if len(rdf) < MIN_REGIME_SAMPLES:
+                    rdf = df_train.copy()
+
+                X_r = rdf[feature_cols].values
+                y_r = rdf["target"].values
+                sw = _compute_sample_weights(rdf)
+                neg = (y_r == 0).sum()
+                pos = (y_r == 1).sum()
+                spw = neg / pos if pos > 0 else 1.0
+
+                # Build Optuna-aware params
+                model_key = f"{group_name}_{regime}"
+                xgb_p = dict(DEFAULT_XGB_PARAMS)
+                xgb_p["scale_pos_weight"] = spw
+                op_xgb = optuna_params.get(f"{model_key}_xgb", {})
+                if op_xgb.get("best_params"):
+                    xgb_p.update(op_xgb["best_params"])
+
+                lgbm_p = dict(DEFAULT_LGBM_PARAMS)
+                lgbm_p["scale_pos_weight"] = spw
+                op_lgbm = optuna_params.get(f"{model_key}_lgbm", {})
+                if op_lgbm.get("best_params"):
+                    lgbm_p.update(op_lgbm["best_params"])
+
+                # Meta-feature column indices
+                meta_feat_idx = []
+                for mf in ["VIX", "VIX_Rank", "Regime_Trend"]:
+                    meta_feat_idx.append(feature_cols.index(mf) if mf in feature_cols else -1)
+
+                # 5-fold OOF stacking
+                tscv = TimeSeriesSplit(n_splits=N_META_FOLDS)
+                oof_xgb = np.zeros(len(X_r))
+                oof_lgbm = np.zeros(len(X_r))
+                oof_meta_feats = [np.zeros(len(X_r)) for _ in meta_feat_idx]
+                valid_mask = np.zeros(len(X_r), dtype=bool)
+
+                for tr_idx, val_idx in tscv.split(X_r):
+                    fold_scaler = StandardScaler()
+                    X_tr = fold_scaler.fit_transform(X_r[tr_idx])
+                    X_val = fold_scaler.transform(X_r[val_idx])
+                    y_tr = y_r[tr_idx]
+                    sw_tr = sw[tr_idx]
+
+                    if len(np.unique(y_r[val_idx])) < 2:
+                        continue
+                    valid_mask[val_idx] = True
+
+                    xm = xgb.XGBClassifier(**xgb_p)
+                    xm.fit(X_tr, y_tr, sample_weight=sw_tr, verbose=False)
+                    oof_xgb[val_idx] = xm.predict_proba(X_val)[:, 1]
+
+                    if LGBM_AVAILABLE:
+                        lm = lgb.LGBMClassifier(**lgbm_p)
+                        lm.fit(X_tr, y_tr, sample_weight=sw_tr)
+                        oof_lgbm[val_idx] = lm.predict_proba(X_val)[:, 1]
+                    else:
+                        oof_lgbm[val_idx] = oof_xgb[val_idx]
+
+                    for j, idx in enumerate(meta_feat_idx):
+                        if idx >= 0:
+                            oof_meta_feats[j][val_idx] = X_r[val_idx, idx]
+
+                if valid_mask.sum() < 100:
+                    continue
+
+                # Fit meta-learner on scaled OOF
+                meta_cols = [oof_xgb.reshape(-1, 1), oof_lgbm.reshape(-1, 1)]
+                for c in oof_meta_feats:
+                    meta_cols.append(c.reshape(-1, 1))
+                meta_X = np.hstack(meta_cols)
+
+                meta_scaler = StandardScaler()
+                meta_X_s = np.copy(meta_X)
+                meta_X_s[valid_mask] = meta_scaler.fit_transform(meta_X[valid_mask])
+
+                meta_lr = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
+                meta_lr.fit(meta_X_s[valid_mask], y_r[valid_mask])
+
+                # Train final base learners on full regime slice
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X_r)
+
+                final_xgb = xgb.XGBClassifier(**xgb_p)
+                final_xgb.fit(X_scaled, y_r, sample_weight=sw, verbose=False)
+
+                final_lgbm = None
+                if LGBM_AVAILABLE:
+                    final_lgbm = lgb.LGBMClassifier(**lgbm_p)
+                    final_lgbm.fit(X_scaled, y_r, sample_weight=sw)
+
+                regime_models[regime] = {
+                    "xgb": final_xgb,
+                    "lgbm": final_lgbm,
+                    "meta": meta_lr,
+                    "meta_scaler": meta_scaler,
+                    "scaler": scaler,
+                    "meta_feat_idx": meta_feat_idx,
+                }
+
+            if not regime_models:
+                continue
+
+            # ---- Predict on test fold through full ensemble stack ----
+            y_prob = np.zeros(len(X_test))
+            vix_test = df_test["VIX"].values if "VIX" in df_test.columns else np.full(len(X_test), 15.0)
+
+            for row_i in range(len(X_test)):
+                regime = "low_vix" if vix_test[row_i] < VIX_BOUNDARY else "high_vix"
+                if regime not in regime_models:
+                    regime = list(regime_models.keys())[0]  # fallback
+
+                rm = regime_models[regime]
+                x_row = X_test[row_i:row_i+1]
+                x_scaled = rm["scaler"].transform(x_row)
+
+                xgb_p_val = rm["xgb"].predict_proba(x_scaled)[0, 1]
+                lgbm_p_val = rm["lgbm"].predict_proba(x_scaled)[0, 1] if rm["lgbm"] else xgb_p_val
+
+                meta_row = [xgb_p_val, lgbm_p_val]
+                for idx in rm["meta_feat_idx"]:
+                    meta_row.append(float(x_row[0, idx]) if idx >= 0 else 0.0)
+                meta_arr = np.array([meta_row])
+                meta_arr = rm["meta_scaler"].transform(meta_arr)
+                y_prob[row_i] = rm["meta"].predict_proba(meta_arr)[0, 1]
+
+        y_pred = (y_prob >= 0.5).astype(int)
         auc = roc_auc_score(y_test, y_prob)
         acc = accuracy_score(y_test, y_pred)
-        if "Close" in df.columns:
-            prices_test = df.loc[test_mask, "Close"].values
-        else:
-            # get_training_data() drops raw OHLC columns; use nominal notional.
-            prices_test = np.full(len(y_test), 100.0)
-        atr_test = df.loc[test_mask, "ATR_Pct"].values if "ATR_Pct" in df.columns else np.zeros(len(y_test))
+
+        prices_test = df_test["Close"].values if "Close" in df_test.columns else np.full(len(y_test), 100.0)
+        atr_test = df_test["ATR_Pct"].values if "ATR_Pct" in df_test.columns else np.zeros(len(y_test))
         policy = _policy_metrics(y_test, y_prob, prices_test, atr_test)
 
         pos_rate = y_test.mean()
+        n_train = len(df_train)
 
         fold_results.append({
             "fold": len(fold_results) + 1,
             "train_through": train_end_year,
             "test_year": f"{test_start_year}" if test_years == 1 else f"{test_start_year}-{test_end_year}",
-            "train_samples": len(X_train),
+            "train_samples": n_train,
             "test_samples": len(X_test),
             "positive_rate": pos_rate,
             "roc_auc": auc,
@@ -277,7 +476,7 @@ def run_walk_forward(
         print(
             f"  Fold {fold_results[-1]['fold']:>2}  "
             f"train≤{train_end_year}  test={fold_results[-1]['test_year']}  "
-            f"n_train={len(X_train):>5}  n_test={len(X_test):>4}  "
+            f"n_train={n_train:>5}  n_test={len(X_test):>4}  "
             f"AUC={auc:.4f}  Acc={acc:.4f}  pos={pos_rate:.1%}  "
             f"trades={policy['n_trades']:>3}  pnl/trade={policy['pnl_per_trade']:+.3f}"
         )
@@ -372,6 +571,10 @@ def main():
     parser.add_argument("--no-rolling-threshold", dest="rolling_threshold",
                         action="store_false",
                         help="Use fixed full-history threshold (original behaviour)")
+    parser.add_argument("--rolling-window", type=int, default=0,
+                        help="Rolling training window in years (default: 0 = expanding)")
+    parser.add_argument("--simple", action="store_true", default=False,
+                        help="Use simple single-XGBoost + isotonic (Round 2 style) instead of full ensemble")
     parser.add_argument("--vix-regime", type=str, default="all",
                         choices=["all", "low", "mid", "high"],
                         help="Filter by VIX regime: low (<18), mid (18–28), high (>28), all (default)")
@@ -385,10 +588,13 @@ def main():
     print("="*80)
     print("WALK-FORWARD VALIDATION")
     print("="*80)
+    window_desc = f"rolling {args.rolling_window}yr" if args.rolling_window > 0 else "expanding"
     print(f"Period:          {args.period}")
     print(f"Min train years: {args.min_train_years}")
+    print(f"Training window: {window_desc}")
     print(f"Groups:          {list(groups_to_run.keys())}")
     print(f"Threshold:       {'rolling 90D P60' if args.rolling_threshold else 'fixed full-history P60'}")
+    print(f"Model:           {'simple (XGB + isotonic)' if args.simple else 'ensemble (XGB + LGBM + stacking)'}")
     print(f"VIX regime:      {args.vix_regime}")
 
     all_results = []
@@ -428,6 +634,8 @@ def main():
             group_name, df, feature_cols,
             min_train_years=args.min_train_years,
             use_rolling_threshold=args.rolling_threshold,
+            rolling_window=args.rolling_window,
+            simple_mode=args.simple,
         )
 
         if result:

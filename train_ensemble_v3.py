@@ -39,6 +39,8 @@ import joblib
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.frozen import FrozenEstimator
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
@@ -112,9 +114,11 @@ class EnsembleTimingTrainer:
     """Train XGB + LGBM stacking ensemble with regime separation."""
 
     def __init__(self, use_gpu: bool = True, use_optuna_params: bool = False,
-                 recency_halflife: float = 2.0):
+                 recency_halflife: float = 2.0, rolling_window: int = 5):
         self.base_models: dict = {}    # {key: {'xgb': ..., 'lgbm': ...}}
         self.meta_learners: dict = {}  # {key: LogisticRegression}
+        self.meta_scalers: dict = {}   # {key: StandardScaler for meta-features}
+        self.calibrators: dict = {}    # {key: CalibratedClassifierCV}
         self.scalers: dict = {}
         self.thresholds: dict = {}
         self.group_mapping: dict = {}
@@ -123,6 +127,7 @@ class EnsembleTimingTrainer:
         self.use_gpu = use_gpu
         self.optuna_params: dict = {}
         self.recency_halflife = recency_halflife
+        self.rolling_window = rolling_window
 
         for group, tickers in TICKER_GROUPS.items():
             for ticker in tickers:
@@ -229,6 +234,15 @@ class EnsembleTimingTrainer:
 
         Returns mean OOF AUC across folds.
         """
+        # Apply rolling training window: keep only the most recent N years
+        if self.rolling_window > 0 and len(df_slice) > 0:
+            latest_year = df_slice.index.year.max()
+            cutoff_year = latest_year - self.rolling_window + 1
+            before = len(df_slice)
+            df_slice = df_slice[df_slice.index.year >= cutoff_year]
+            print(f"  [{model_key}] Rolling {self.rolling_window}yr window: "
+                  f"{before} → {len(df_slice)} rows ({cutoff_year}–{latest_year})")
+
         # Label alignment: rolling 90D P60 threshold
         df_slice = apply_rolling_threshold(df_slice, window=90, quantile=0.60)
         self.thresholds[model_key] = float(df_slice['Max_Drawdown_35D'].quantile(0.60))
@@ -310,9 +324,26 @@ class EnsembleTimingTrainer:
         meta_fit_mask = valid_oof_mask
         if meta_fit_mask.sum() < 200:
             raise RuntimeError(f"[{model_key}] Not enough OOF rows to fit meta-learner: {meta_fit_mask.sum()}")
+
+        # Scale meta-features so LogisticRegression treats all inputs equally
+        meta_scaler = StandardScaler()
+        meta_X_scaled = np.copy(meta_X)
+        meta_X_scaled[meta_fit_mask] = meta_scaler.fit_transform(meta_X[meta_fit_mask])
+        self.meta_scalers[model_key] = meta_scaler
+
         meta_learner = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
-        meta_learner.fit(meta_X[meta_fit_mask], y[meta_fit_mask])
+        meta_learner.fit(meta_X_scaled[meta_fit_mask], y[meta_fit_mask])
         self.meta_learners[model_key] = meta_learner
+
+        # Isotonic calibration on held-out tail of OOF predictions
+        valid_indices = np.where(meta_fit_mask)[0]
+        cal_start = int(len(valid_indices) * 0.8)
+        cal_indices = valid_indices[cal_start:]
+        if len(cal_indices) >= 50 and len(np.unique(y[cal_indices])) > 1:
+            cal = CalibratedClassifierCV(FrozenEstimator(meta_learner), method='isotonic')
+            cal.fit(meta_X_scaled[cal_indices], y[cal_indices])
+            self.calibrators[model_key] = cal
+            print(f"  [{model_key}] Isotonic calibrator fitted on {len(cal_indices)} OOF rows")
 
         # Train final base learners on full slice (with a full-data scaler for inference).
         scaler = StandardScaler()
@@ -376,6 +407,8 @@ class EnsembleTimingTrainer:
             'regime_models': True,
             'base_models': self.base_models,
             'meta_learners': self.meta_learners,
+            'meta_scalers': self.meta_scalers,
+            'calibrators': self.calibrators,
             'scalers': self.scalers,
             'thresholds': self.thresholds,
             'group_mapping': self.group_mapping,
@@ -402,18 +435,23 @@ def main():
                         help=f'Load hyperparameters from {OPTUNA_PARAMS_FILE}')
     parser.add_argument('--recency-halflife', type=float, default=2.0,
                         help='Half-life in years for exponential recency weighting (0 = uniform)')
+    parser.add_argument('--rolling-window', type=int, default=0,
+                        help='Rolling training window in years (default: 0 = use all data)')
     args = parser.parse_args()
 
+    window_desc = f"rolling {args.rolling_window}yr" if args.rolling_window > 0 else "expanding (all data)"
     print('='*70)
     print('CSP TIMING ENSEMBLE V3')
     print('='*70)
     print(f"Optuna params: {'yes' if args.use_optuna_params else 'no'}")
+    print(f"Training window: {window_desc}")
     print(f"LightGBM:      {'available' if LGBM_AVAILABLE else 'NOT AVAILABLE — pip install lightgbm'}")
 
     trainer = EnsembleTimingTrainer(
         use_gpu=not args.no_gpu,
         use_optuna_params=args.use_optuna_params,
         recency_halflife=args.recency_halflife,
+        rolling_window=args.rolling_window,
     )
     trainer.collect_data(period=args.period)
     trainer.train_all_groups()
