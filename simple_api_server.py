@@ -9,7 +9,9 @@ from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 import joblib
+import json
 import os
+import threading
 import warnings
 import numpy as np
 from datetime import datetime, timedelta
@@ -17,8 +19,16 @@ from datetime import datetime, timedelta
 # Suppress LightGBM v4 feature-name mismatch warning (cosmetic, not a correctness issue)
 warnings.filterwarnings('ignore', message='.*feature names.*', category=UserWarning)
 from data_collector import CSPDataCollector
-from options_analyzer import get_best_csp_option
-from options_analyzer_multi import get_all_csp_options
+
+# Lazy imports — options_analyzer depends on advanced_options_pricing which may
+# not be present.  These are only needed for the Yahoo Finance fallback path.
+def get_best_csp_option(*args, **kwargs):
+    from options_analyzer import get_best_csp_option as _fn
+    return _fn(*args, **kwargs)
+
+def get_all_csp_options(*args, **kwargs):
+    from options_analyzer_multi import get_all_csp_options as _fn
+    return _fn(*args, **kwargs)
 
 # Try to import Schwab client (optional)
 try:
@@ -941,17 +951,15 @@ def predict(request: PredictionRequest):
 
         # Log prediction for forward validation
         try:
-            validator = get_validator()
-            if validator:
-                validator.log_prediction(
-                    ticker=ticker,
-                    price=current_price,
-                    p_safe=p_safe,
-                    p_downside=p_downside,
-                    csp_score=csp_score,
-                    suggested_strike=options_data['strike'] if options_data else None,
-                    suggested_expiration=options_data['expiration'] if options_data else None
-                )
+            _log_prediction(
+                ticker=ticker,
+                price=current_price,
+                p_safe=p_safe,
+                p_downside=p_downside,
+                csp_score=csp_score,
+                suggested_strike=options_data['strike'] if options_data else None,
+                suggested_expiration=options_data['expiration'] if options_data else None,
+            )
         except Exception as log_err:
             print(f"Failed to log prediction: {log_err}")
 
@@ -1046,72 +1054,112 @@ def predict_multi(request: MultiTickerRequest):
 # VALIDATION ENDPOINTS
 # =========================================================================
 
-# Initialize validator (lazy load)
-_validator = None
+# ---------------------------------------------------------------------------
+# Lightweight prediction logger (replaces old ModelValidator dependency)
+# ---------------------------------------------------------------------------
+_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "predictions_log.json")
+_log_lock = threading.Lock()
 
-def get_validator():
-    global _validator
-    if _validator is None:
+
+def _load_predictions_log():
+    if os.path.exists(_LOG_PATH):
         try:
-            from model_validator import ModelValidator
-            _validator = ModelValidator()
-        except ImportError:
-            return None
-    return _validator
+            with open(_LOG_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"predictions": []}
+
+
+def _save_predictions_log(data):
+    with open(_LOG_PATH, "w") as f:
+        json.dump(data, f, indent=2, default=str)
+
+
+def _log_prediction(ticker, price, p_safe, p_downside, csp_score,
+                    suggested_strike=None, suggested_expiration=None):
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "ticker": ticker,
+        "price": float(price),
+        "p_safe": float(p_safe),
+        "p_downside": float(p_downside),
+        "csp_score": float(csp_score),
+        "prediction": "SAFE" if p_safe > p_downside else "RISKY",
+        "suggested_strike": suggested_strike,
+        "suggested_expiration": suggested_expiration,
+        "outcome": None,
+        "outcome_date": None,
+    }
+    with _log_lock:
+        data = _load_predictions_log()
+        data["predictions"].append(entry)
+        _save_predictions_log(data)
 
 
 @app.get("/validation/stats")
 def get_validation_stats():
     """Get prediction accuracy stats from logged predictions"""
-    validator = get_validator()
-    if validator is None:
-        return {"status": "error", "message": "Validator not available"}
+    data = _load_predictions_log()
+    preds = data.get("predictions", [])
+    settled = [p for p in preds if p.get("outcome") is not None]
 
-    accuracy = validator.get_prediction_accuracy()
-    recent = validator.get_recent_predictions(10)
+    if not settled:
+        return {
+            "status": "success",
+            "accuracy_stats": {"message": "No predictions with outcomes yet",
+                               "total_predictions": len(preds),
+                               "settled": 0},
+            "recent_predictions": preds[-10:],
+            "timestamp": datetime.now().isoformat(),
+        }
 
+    correct = sum(
+        1 for p in settled
+        if (p["p_safe"] > 0.5) == (p["outcome"] == 1)
+    )
     return {
         "status": "success",
-        "accuracy_stats": accuracy,
-        "recent_predictions": recent,
-        "timestamp": datetime.now().isoformat()
+        "accuracy_stats": {
+            "total_predictions": len(preds),
+            "settled": len(settled),
+            "accuracy": round(correct / len(settled), 4),
+        },
+        "recent_predictions": preds[-10:],
+        "timestamp": datetime.now().isoformat(),
     }
 
 
 @app.post("/validation/record_outcome")
 def record_outcome(ticker: str, prediction_date: str, outcome: int, actual_return: float = None):
-    """
-    Record the actual outcome for a past prediction
-
-    Args:
-        ticker: Stock ticker
-        prediction_date: Date prediction was made (YYYY-MM-DD)
-        outcome: 1 if stock didn't drop >5%, 0 if it did
-        actual_return: Actual return over the period (optional)
-    """
-    validator = get_validator()
-    if validator is None:
-        return {"status": "error", "message": "Validator not available"}
-
-    success = validator.record_outcome(ticker, prediction_date, outcome, actual_return)
-
+    """Record the actual outcome for a past prediction"""
+    with _log_lock:
+        data = _load_predictions_log()
+        found = False
+        for pred in data["predictions"]:
+            if pred["ticker"] == ticker and pred["timestamp"].startswith(prediction_date):
+                pred["outcome"] = int(outcome)
+                pred["outcome_date"] = datetime.now().isoformat()
+                if actual_return is not None:
+                    pred["actual_return"] = float(actual_return)
+                found = True
+                break
+        if found:
+            _save_predictions_log(data)
     return {
-        "status": "success" if success else "not_found",
-        "message": f"Outcome recorded for {ticker}" if success else f"No prediction found for {ticker} on {prediction_date}"
+        "status": "success" if found else "not_found",
+        "message": f"Outcome recorded for {ticker}" if found else f"No prediction found for {ticker} on {prediction_date}",
     }
 
 
 @app.get("/validation/recent")
 def get_recent_predictions(n: int = 20):
     """Get recent logged predictions"""
-    validator = get_validator()
-    if validator is None:
-        return {"status": "error", "message": "Validator not available"}
-
+    data = _load_predictions_log()
     return {
         "status": "success",
-        "predictions": validator.get_recent_predictions(n),
-        "timestamp": datetime.now().isoformat()
+        "predictions": data.get("predictions", [])[-n:],
+        "timestamp": datetime.now().isoformat(),
     }
 
 

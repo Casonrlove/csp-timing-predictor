@@ -6,8 +6,7 @@ Settlement logic (default):
 - Outcome = 1 if max drawdown over the forward window is > -drop_threshold.
 - Outcome = 0 otherwise.
 
-This matches the validator convention of:
-"1 if stock didn't drop >5%, 0 if it did" (default 5% threshold).
+Uses Schwab API when available (preferred), falls back to Yahoo Finance.
 """
 
 import argparse
@@ -18,6 +17,14 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# Try Schwab first, fall back to Yahoo
+try:
+    from schwab_client import get_price_history
+    SCHWAB_AVAILABLE = True
+except ImportError:
+    SCHWAB_AVAILABLE = False
+
 import yfinance as yf
 
 
@@ -25,10 +32,11 @@ def parse_args():
     p = argparse.ArgumentParser(description="Bulk-settle CSP prediction outcomes")
     p.add_argument("--log", default="predictions_log.json", help="Path to predictions log JSON")
     p.add_argument("--forward-days", type=int, default=35, help="Forward window in trading bars")
-    p.add_argument("--drop-threshold", type=float, default=0.05, help="Drop threshold fraction (0.05 = 5%)")
-    p.add_argument("--period", default="10y", help="History period to fetch per ticker")
+    p.add_argument("--drop-threshold", type=float, default=0.05, help="Drop threshold fraction (0.05 = 5%%)")
+    p.add_argument("--period", default="6mo", help="History period to fetch per ticker (Yahoo fallback)")
     p.add_argument("--dry-run", action="store_true", help="Compute settlements without writing")
     p.add_argument("--backup", action="store_true", help="Write .bak copy before saving")
+    p.add_argument("--force-yahoo", action="store_true", help="Force Yahoo Finance even if Schwab is available")
     return p.parse_args()
 
 
@@ -37,16 +45,47 @@ def load_log(path: Path):
         return json.load(f)
 
 
-def fetch_close_series(ticker: str, period: str):
-    hist = yf.Ticker(ticker).history(period=period)
-    if hist is None or hist.empty or "Close" not in hist.columns:
+def fetch_close_series_schwab(ticker: str) -> pd.Series | None:
+    """Fetch daily close prices via Schwab API (1 year)."""
+    try:
+        data = get_price_history(ticker, period_type='year', period=1,
+                                 frequency_type='daily', frequency=1)
+        if not data or 'candles' not in data or not data['candles']:
+            return None
+        candles = data['candles']
+        dates = pd.to_datetime([c['datetime'] for c in candles], unit='ms').normalize()
+        closes = [c['close'] for c in candles]
+        return pd.Series(closes, index=dates, name='Close')
+    except Exception as e:
+        print(f"  Schwab fetch failed for {ticker}: {e}")
         return None
-    s = hist["Close"].copy()
-    idx = pd.to_datetime(s.index)
-    if idx.tz is not None:
-        idx = idx.tz_convert("UTC").tz_localize(None)
-    s.index = idx.normalize()
-    return s
+
+
+def fetch_close_series_yahoo(ticker: str, period: str) -> pd.Series | None:
+    """Fetch daily close prices via Yahoo Finance."""
+    try:
+        hist = yf.Ticker(ticker).history(period=period)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return None
+        s = hist["Close"].copy()
+        idx = pd.to_datetime(s.index)
+        if idx.tz is not None:
+            idx = idx.tz_convert("UTC").tz_localize(None)
+        s.index = idx.normalize()
+        return s
+    except Exception as e:
+        print(f"  Yahoo fetch failed for {ticker}: {e}")
+        return None
+
+
+def fetch_close_series(ticker: str, period: str, use_schwab: bool = True) -> pd.Series | None:
+    """Fetch close prices, preferring Schwab API with Yahoo fallback."""
+    if use_schwab and SCHWAB_AVAILABLE:
+        series = fetch_close_series_schwab(ticker)
+        if series is not None and len(series) > 0:
+            return series
+        print(f"  Schwab returned no data for {ticker}, falling back to Yahoo")
+    return fetch_close_series_yahoo(ticker, period)
 
 
 def settle_prediction(pred: dict, close_series: pd.Series, forward_days: int, drop_threshold: float):
@@ -93,6 +132,10 @@ def main():
     if not predictions:
         raise SystemExit("No predictions found in log.")
 
+    use_schwab = not args.force_yahoo
+    source = "Schwab API (Yahoo fallback)" if (use_schwab and SCHWAB_AVAILABLE) else "Yahoo Finance"
+    print(f"Data source: {source}")
+
     by_ticker = {}
     for p in predictions:
         t = (p.get("ticker") or "").upper()
@@ -101,7 +144,10 @@ def main():
 
     series_cache = {}
     for ticker in sorted(by_ticker.keys()):
-        series_cache[ticker] = fetch_close_series(ticker, args.period)
+        print(f"  Fetching {ticker}...", end=" ", flush=True)
+        series_cache[ticker] = fetch_close_series(ticker, args.period, use_schwab=use_schwab)
+        n = len(series_cache[ticker]) if series_cache[ticker] is not None else 0
+        print(f"{n} bars")
 
     updated = 0
     skipped_existing = 0
@@ -136,7 +182,7 @@ def main():
         pred["actual_return"] = float(actual_return)
         updated += 1
 
-    print(f"Predictions total:    {len(predictions)}")
+    print(f"\nPredictions total:    {len(predictions)}")
     print(f"Updated outcomes:     {updated}")
     print(f"Already settled:      {skipped_existing}")
     print(f"Unmatured/no-window:  {skipped_unmatured}")
