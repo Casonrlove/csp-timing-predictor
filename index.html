@@ -1905,7 +1905,14 @@
                 };
 
                 es.onerror = function() {
-                    stopLiveStream(ticker);
+                    // Close stale connection and auto-reconnect after 3s.
+                    // ngrok and other proxies drop idle SSE connections; this keeps
+                    // the badge green and reconnects silently.
+                    es.close();
+                    delete activeStreams[ticker];
+                    setTimeout(() => {
+                        if (!activeStreams[ticker]) startLiveStream(ticker);
+                    }, 3000);
                 };
 
                 activeStreams[ticker] = es;
