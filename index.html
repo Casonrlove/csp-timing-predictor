@@ -1176,44 +1176,48 @@
                         ${data.options_data && data.options_data.edge > 0 ? `
                         <div class="technical-section" style="background: rgba(22, 27, 34, 0.8); padding: 12px 15px; border-radius: 8px; margin-top: 15px; border: 1px solid #30363d;">
                             <h4 style="color: #58a6ff; margin: 0 0 10px 0; font-size: 0.9rem;">📈 Suggested CSP Trade</h4>
-                            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                            <div style="overflow-x: auto;">
+                            <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
                                 <thead>
-                                    <tr style="color:#718096;border-bottom:1px solid #30363d;">
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Strike</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Price</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Premium</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Delta</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">DTE</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Expiry</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">ROR</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Ann. ROR</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Edge</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Mkt Δ</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Model Risk</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">IV</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Volume</th>
-                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">OI</th>
+                                    <tr style="background: var(--bg-row-alt);">
+                                        <th style="padding:6px 8px;text-align:left;color:var(--text-secondary);">Strike</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Bid</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Ask</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Delta</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Model</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Edge</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">ROR</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">θ Eff</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Theta</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Vol</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Gamma</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Vega</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Last</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Mid</th>
+                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">IV</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr style="color:#e2e8f0;text-align:center;">
-                                        <td style="padding:4px 8px;font-weight:bold;">$${data.options_data.strike.toFixed(2)}</td>
-                                        <td style="padding:4px 8px;">$${data.current_price.toFixed(2)}</td>
-                                        <td style="padding:4px 8px;font-weight:bold;">$${data.options_data.premium.toFixed(2)}</td>
-                                        <td style="padding:4px 8px;">${data.options_data.delta.toFixed(3)}</td>
-                                        <td style="padding:4px 8px;">${data.options_data.dte}d</td>
-                                        <td style="padding:4px 8px;">${data.options_data.expiration}</td>
-                                        <td style="padding:4px 8px;color:#3fb950;font-weight:bold;">${data.options_data.ror.toFixed(2)}%</td>
-                                        <td style="padding:4px 8px;color:#3fb950;font-weight:bold;">${data.options_data.annualized_ror.toFixed(1)}%</td>
-                                        <td style="padding:4px 8px;font-weight:bold;color:${data.options_data.edge > 0 ? '#3fb950' : '#f85149'};">${data.options_data.edge > 0 ? '+' : ''}${data.options_data.edge.toFixed(1)}pp</td>
-                                        <td style="padding:4px 8px;">${(data.options_data.market_delta * 100).toFixed(1)}%</td>
-                                        <td style="padding:4px 8px;">${(data.options_data.model_prob_assignment * 100).toFixed(1)}%</td>
-                                        <td style="padding:4px 8px;">${(data.options_data.implied_volatility * 100).toFixed(2)}%</td>
-                                        <td style="padding:4px 8px;">${data.options_data.volume}</td>
-                                        <td style="padding:4px 8px;">${data.options_data.open_interest}</td>
+                                    <tr style="border-bottom:1px solid var(--border-color);background:rgba(128,90,213,0.25);border-left:3px solid var(--accent-purple);">
+                                        <td style="padding:6px 8px;color:var(--text-strike);"><strong>$${data.options_data.strike.toFixed(2)}</strong> ⭐</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.bid.toFixed(2)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ask.toFixed(2)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.delta.toFixed(2)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:var(--accent-blue);">${data.options_data.model_prob_assignment.toFixed(2)}</td>
+                                        <td style="padding:6px 8px;text-align:right;font-weight:bold;color:var(${data.options_data.edge > 0 ? '--positive-green' : '--negative-red'});">${data.options_data.edge > 0 ? '+' : ''}${data.options_data.edge.toFixed(1)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ror.toFixed(1)}%</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta_efficiency ? data.options_data.theta_efficiency.toFixed(3) : '-'}%</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta.toFixed(2)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.volume.toLocaleString()}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.gamma.toFixed(3)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.vega.toFixed(2)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.last.toFixed(2)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.premium.toFixed(2)}</td>
+                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.implied_volatility * 100).toFixed(0)}%</td>
                                     </tr>
                                 </tbody>
                             </table>
+                            </div>
                         </div>
                         ` : ''}
 
