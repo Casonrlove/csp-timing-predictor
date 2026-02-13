@@ -1090,7 +1090,7 @@
                             const _ema = (p, e12, e26, e9) => {
                                 const pct = (v) => v != null && _last ? ((_last / v - 1) * 100).toFixed(2) + '%' : '-';
                                 return `
-                        <table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:12px;">
+                        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table style="width:100%;min-width:700px;border-collapse:collapse;font-size:0.82rem;margin-bottom:12px;">
                             <thead>
                                 <tr style="color:#718096;border-bottom:1px solid #30363d;">
                                     <th style="padding:4px 8px;font-weight:500;text-align:center;">Support</th>
@@ -1119,7 +1119,7 @@
                                     <td style="padding:4px 8px;">${data.technical_context.volatility.vix.toFixed(2)}</td>
                                 </tr>
                             </tbody>
-                        </table>`;
+                        </table></div>`;
                             };
                             if (_px.length >= 26) {
                                 const _e12v = computeEMA(_px, 12); const _e26v = computeEMA(_px, 26); const _e9v = computeEMA(_px, 9);
@@ -1163,7 +1163,7 @@
                                 <div id="optionsTable_${data.ticker}_${exp.replace(/-/g, '')}"
                                      style="display: ${idx === 0 ? 'block' : 'none'};">
                                     <div style="overflow-x: auto;">
-                                        <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed;">
+                                        <table style="width: 100%; min-width: 900px; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed;">
                                             <colgroup>
                                                 <col style="width: 7%">  <!-- Strike -->
                                                 <col style="width: 6%">  <!-- Bid -->
