@@ -29,10 +29,10 @@ fi
 
 # Train model if --train flag provided
 if [ "$1" == "--train" ]; then
-    echo "Training model..."
-    echo "This may take 10-30 minutes depending on GPU availability."
+    echo "Training contract model (XGB+LGBM ensemble, 9 delta buckets)..."
+    echo "This may take 1-2 hours depending on GPU availability."
     echo ""
-    python train_ultimate.py
+    SCHWAB_ONLY=1 python train_contract_model.py --use-optuna-params --recency-halflife 2.0
     if [ $? -eq 0 ]; then
         echo "✓ Model training complete!"
     else
