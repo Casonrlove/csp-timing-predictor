@@ -1214,14 +1214,19 @@ def predict(request: PredictionRequest):
                             and 20 <= opt.get('dte', 0) <= 50  # 20-50 DTE window
                         ]
                         if ev_candidates:
-                            best_option = max(ev_candidates, key=lambda x: x.get('risk_adjusted_ev', -1e9))
+                            # Score = risk_adjusted_ev × edge_prob: rewards both high EV and strong mispricing
+                            best_option = max(
+                                ev_candidates,
+                                key=lambda x: x.get('risk_adjusted_ev', 0) * x.get('edge_prob', 0)
+                            )
                             best_option['is_suggested'] = True
                             options_data = best_option
+                            score = best_option.get('risk_adjusted_ev', 0) * best_option.get('edge_prob', 0)
                             print(
-                                f"Best EV: ${best_option['strike']} strike, "
+                                f"Best EV×Edge: ${best_option['strike']} strike, "
                                 f"EV/share={best_option['ev_per_share']:.3f}, "
                                 f"RiskAdjEV={best_option['risk_adjusted_ev']:.3f}, "
-                                f"Edge={best_option['edge']:.1f}"
+                                f"Edge={best_option['edge']:.1f}, Score={score:.4f}"
                             )
                         else:
                             options_data = None
