@@ -1123,7 +1123,6 @@
                             <span style="color: rgba(248, 81, 73, 0.5);">▓ Risk Zone</span>
                             <span style="color: #f97316;">━ MACD</span>
                             <span style="color: #818cf8;">━ Signal</span>
-                            <span style="color: #22c55e;">▓ Hist</span>
                         </div>
                     </div>
                     ` : ''}
@@ -1339,6 +1338,16 @@
         let chartFullData = null;  // Store full data for range switching
         let currentChartRange = 5;  // Default to 1 week
 
+        function computeSMA(data, period) {
+            const out = Array(data.length).fill(null);
+            for (let i = period - 1; i < data.length; i++) {
+                let sum = 0;
+                for (let j = i - period + 1; j <= i; j++) sum += data[j];
+                out[i] = sum / period;
+            }
+            return out;
+        }
+
         function computeEMA(data, period) {
             const k = 2 / (period + 1);
             const out = Array(data.length).fill(null);
@@ -1525,16 +1534,13 @@
                 { x: lastTs + barMs * projBarCount, y: riskThreshold }
             ];
 
-            // SMA lines as {x, y} — only available from price_history
-            const smaLine = (key) => hasSMA
-                ? history.map(d => ({ x: toTs(d.date), y: d[key] ?? null }))
-                : [];
-
-            // EMA lines computed client-side
+            // EMA + SMA lines computed client-side (work for any candle frequency)
             const ema12vals = computeEMA(prices, 12);
             const ema26vals = computeEMA(prices, 26);
             const ema9vals  = computeEMA(prices, 9);
-            const emaLine = (vals) => history.map((d, i) => ({ x: toTs(d.date), y: vals[i] ?? null }));
+            const sma50vals = computeSMA(prices, 50);
+            const sma200vals = computeSMA(prices, 200);
+            const maLine = (vals) => history.map((d, i) => ({ x: toTs(d.date), y: vals[i] ?? null }));
 
             const tooltipEl = document.getElementById(`chartTooltip_${data.ticker}`);
 
@@ -1556,13 +1562,11 @@
                                 unchanged: '#8b949e',
                             },
                         },
-                        { type:'line', label:'EMA 12', data: emaLine(ema12vals), borderColor:'#38bdf8', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
-                        { type:'line', label:'EMA 26', data: emaLine(ema26vals), borderColor:'#fb923c', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
-                        { type:'line', label:'EMA 9',  data: emaLine(ema9vals),  borderColor:'#a3e635', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
-                        ...(hasSMA ? [
-                            { type:'line', label:'SMA 50',  data: smaLine('sma50'),  borderColor:'#d29922', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[4,3] },
-                            { type:'line', label:'SMA 200', data: smaLine('sma200'), borderColor:'#a371f7', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[6,3] },
-                        ] : []),
+                        { type:'line', label:'EMA 12', data: maLine(ema12vals),  borderColor:'#38bdf8', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
+                        { type:'line', label:'EMA 26', data: maLine(ema26vals),  borderColor:'#fb923c', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
+                        { type:'line', label:'EMA 9',  data: maLine(ema9vals),   borderColor:'#a3e635', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
+                        { type:'line', label:'SMA 50',  data: maLine(sma50vals),  borderColor:'#d29922', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[4,3] },
+                        { type:'line', label:'SMA 200', data: maLine(sma200vals), borderColor:'#a371f7', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[6,3] },
                         { type:'line', label:'Projection', data: projLine, borderColor: projColor, backgroundColor:'transparent', borderWidth:2, pointRadius:0, borderDash:[6,4] },
                         { type:'line', label:'Upper Band', data: upBand,   borderColor:'rgba(34,197,94,0.25)',  backgroundColor:'rgba(34,197,94,0.07)',  fill:'+1', borderWidth:1, pointRadius:0 },
                         { type:'line', label:'Lower Band', data: loBand,   borderColor:'rgba(239,68,68,0.2)',   backgroundColor:'transparent', borderWidth:1, pointRadius:0 },
