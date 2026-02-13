@@ -1457,10 +1457,13 @@
             const sma50 = history.map(d => d.sma50);
             const sma200 = history.map(d => d.sma200);
 
-            // Calculate projection dates (35 days forward)
+            // Projection length: at most 1/4 of the history window so it
+            // never exceeds 1/5 of the total chart width (1/4 ÷ (1 + 1/4) = 1/5)
+            const projDays = Math.max(1, Math.round(rangeDays / 4));
+
             const lastDate = new Date(history[history.length - 1].date);
             const projectionDates = [];
-            for (let i = 1; i <= 35; i++) {
+            for (let i = 1; i <= projDays; i++) {
                 const d = new Date(lastDate);
                 d.setDate(d.getDate() + i);
                 projectionDates.push(d.toISOString().slice(0, 10));
@@ -1481,15 +1484,15 @@
             const dailyVol = volatility / Math.sqrt(lookback) * 1.5;
 
             const allLabels = [...labels, ...projectionDates];
-            const pricesWithNull = [...prices, ...new Array(35).fill(null)];
-            const sma20WithNull = [...sma20, ...new Array(35).fill(null)];
-            const sma50WithNull = [...sma50, ...new Array(35).fill(null)];
-            const sma200WithNull = [...sma200, ...new Array(35).fill(null)];
+            const pricesWithNull = [...prices, ...new Array(projDays).fill(null)];
+            const sma20WithNull = [...sma20, ...new Array(projDays).fill(null)];
+            const sma50WithNull = [...sma50, ...new Array(projDays).fill(null)];
+            const sma200WithNull = [...sma200, ...new Array(projDays).fill(null)];
 
             // Projection line (center)
             const projectionLine = [...new Array(prices.length).fill(null)];
-            for (let i = 0; i <= 35; i++) {
-                const progress = i / 35;
+            for (let i = 0; i <= projDays; i++) {
+                const progress = i / projDays;
                 projectionLine.push(currentPrice + (projectedPrice - currentPrice) * progress);
             }
 
