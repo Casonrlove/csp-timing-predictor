@@ -1808,9 +1808,11 @@
         });
 
         // ============================================
-        // LIVE STREAMING
+        // LIVE STREAMING — uses fetch+ReadableStream instead of EventSource
+        // so the ngrok-skip-browser-warning header can be sent (EventSource
+        // cannot set custom headers and gets blocked by ngrok's interstitial).
         // ============================================
-        const activeStreams = {};  // ticker -> EventSource
+        const activeStreams = {};  // ticker -> AbortController
 
         function toggleLiveStream(ticker) {
             if (activeStreams[ticker]) {
@@ -1820,92 +1822,126 @@
             }
         }
 
-        function startLiveStream(ticker) {
-            if (activeStreams[ticker]) return;  // already streaming
+        function handleTick(ticker, data) {
+            if (data.error) { stopLiveStream(ticker); return; }
 
-            try {
-                const apiUrl = getApiUrl();
-                const es = new EventSource(`${apiUrl}/stream/${ticker}?interval=10&ngrok-skip-browser-warning=true`);
-                let lastPrice = null;
+            // --- Options tick ---
+            if (data.type === 'options' && Array.isArray(data.options)) {
+                data.options.forEach(opt => {
+                    const key = `${ticker}_${opt.expiration}_${opt.strike.toFixed(2)}`;
+                    const row = document.querySelector(`tr[data-opt-key="${key}"]`);
+                    if (!row) return;
+                    const cells = row.children;
+                    const safe = (i, v) => { if (cells[i]) cells[i].textContent = v; };
+                    safe(1, opt.bid.toFixed(2));
+                    safe(2, opt.ask.toFixed(2));
+                    safe(3, opt.delta.toFixed(3));
+                    safe(8, opt.theta.toFixed(4));
+                    safe(9, (opt.volume || 0).toLocaleString());
+                    safe(10, opt.gamma.toFixed(5));
+                    safe(11, opt.vega.toFixed(4));
+                    safe(12, opt.last.toFixed(2));
+                    safe(13, ((opt.bid + opt.ask) / 2).toFixed(2));
+                    safe(14, (opt.implied_volatility * 100).toFixed(1) + '%');
+                });
+                return;
+            }
 
-                es.onmessage = function(event) {
-                    const data = JSON.parse(event.data);
-                    if (data.error) {
-                        stopLiveStream(ticker);
-                        return;
-                    }
+            // --- Price tick ---
+            const priceEl   = document.getElementById(`livePrice_${ticker}`);
+            if (!priceEl) return;
+            const changeEl  = document.getElementById(`liveChange_${ticker}`);
+            const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
+            const bidAskBox = document.getElementById(`liveBidAsk_${ticker}`);
+            const bidEl     = document.getElementById(`liveBid_${ticker}`);
+            const rangeBox  = document.getElementById(`liveRange_${ticker}`);
+            const rangeEl   = document.getElementById(`liveDayRange_${ticker}`);
+            const priceBox  = document.getElementById(`livePriceBox_${ticker}`);
+            const badge     = document.getElementById(`streamBadge_${ticker}`);
 
-                    const priceEl = document.getElementById(`livePrice_${ticker}`);
-                    const changeEl = document.getElementById(`liveChange_${ticker}`);
-                    const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
-                    const bidAskBox = document.getElementById(`liveBidAsk_${ticker}`);
-                    const bidEl = document.getElementById(`liveBid_${ticker}`);
-                    const rangeBox = document.getElementById(`liveRange_${ticker}`);
-                    const rangeEl = document.getElementById(`liveDayRange_${ticker}`);
-                    const priceBox = document.getElementById(`livePriceBox_${ticker}`);
+            const prevPrice = parseFloat(priceEl.textContent.replace('$', '')) || null;
+            if (prevPrice !== null && data.price !== prevPrice && priceBox) {
+                priceBox.classList.remove('price-flash-up', 'price-flash-down');
+                void priceBox.offsetWidth;
+                priceBox.classList.add(data.price > prevPrice ? 'price-flash-up' : 'price-flash-down');
+            }
 
-                    if (!priceEl) return;
+            priceEl.textContent = `$${data.price.toFixed(2)}`;
 
-                    // Flash price on change
-                    if (lastPrice !== null && data.price !== lastPrice) {
-                        priceBox.classList.remove('price-flash-up', 'price-flash-down');
-                        void priceBox.offsetWidth;  // force reflow
-                        priceBox.classList.add(data.price > lastPrice ? 'price-flash-up' : 'price-flash-down');
-                    }
-                    lastPrice = data.price;
-
-                    // Update price
-                    priceEl.textContent = `$${data.price.toFixed(2)}`;
-
-                    // Update change
-                    const sign = data.change >= 0 ? '+' : '';
-                    const changeColor = data.change >= 0 ? 'var(--positive-green)' : 'var(--negative-red)';
-                    changeEl.innerHTML = `<span style="color: ${changeColor}">${sign}${data.change.toFixed(2)} (${sign}${data.change_percent.toFixed(2)}%)</span>`;
-
-                    // Show bid/ask
-                    if (bidAskBox) {
-                        bidAskBox.style.display = '';
-                        bidEl.textContent = `$${data.bid.toFixed(2)} / $${data.ask.toFixed(2)}`;
-                    }
-
-                    // Show day range
-                    if (rangeBox) {
-                        rangeBox.style.display = '';
-                        rangeEl.textContent = `$${data.low.toFixed(2)} - $${data.high.toFixed(2)}`;
-                    }
-
-                    // Show LIVE indicator + activate badge
-                    if (indicatorEl) indicatorEl.style.display = 'inline';
-                    const badge = document.getElementById(`streamBadge_${ticker}`);
-                    if (badge) {
-                        badge.style.background = 'rgba(34, 197, 94, 0.8)';
-                        badge.style.animation = 'pulse 2s infinite';
-                        badge.title = 'Click to stop stream';
-                    }
-                };
-
-                es.onerror = function() {
-                    // Close stale connection and auto-reconnect after 3s.
-                    // ngrok and other proxies drop idle SSE connections; this keeps
-                    // the badge green and reconnects silently.
-                    es.close();
-                    delete activeStreams[ticker];
-                    setTimeout(() => {
-                        if (!activeStreams[ticker]) startLiveStream(ticker);
-                    }, 3000);
-                };
-
-                activeStreams[ticker] = es;
-            } catch (e) {
-                console.error('Failed to start stream:', e);
+            if (changeEl) {
+                const sign = data.change >= 0 ? '+' : '';
+                const col  = data.change >= 0 ? '#22c55e' : '#ef4444';
+                changeEl.innerHTML = `<span style="color:${col}">${sign}${data.change.toFixed(2)} (${sign}${data.change_percent.toFixed(2)}%)</span>`;
+            }
+            if (bidAskBox && bidEl) {
+                bidAskBox.style.display = '';
+                bidEl.textContent = `$${data.bid.toFixed(2)} / $${data.ask.toFixed(2)}`;
+            }
+            if (rangeBox && rangeEl) {
+                rangeBox.style.display = '';
+                rangeEl.textContent = `$${data.low.toFixed(2)} - $${data.high.toFixed(2)}`;
+            }
+            if (indicatorEl) indicatorEl.style.display = 'inline';
+            if (badge) {
+                badge.style.background = 'rgba(34, 197, 94, 0.85)';
+                badge.style.animation  = 'pulse 2s infinite';
+                badge.title = 'Click to stop stream';
             }
         }
 
+        function startLiveStream(ticker) {
+            if (activeStreams[ticker]) return;
+
+            const controller = new AbortController();
+            activeStreams[ticker] = controller;
+
+            const run = async () => {
+                const apiUrl = getApiUrl();
+                let response;
+                try {
+                    response = await fetch(
+                        `${apiUrl}/stream/${ticker}?interval=10&include_options=true&min_delta=0.10&max_delta=0.60&options_interval=30`,
+                        { headers: { 'ngrok-skip-browser-warning': 'true' }, signal: controller.signal }
+                    );
+                } catch (e) {
+                    if (!controller.signal.aborted) setTimeout(run, 3000);
+                    return;
+                }
+
+                if (!response.ok || !response.body) {
+                    if (!controller.signal.aborted) setTimeout(run, 3000);
+                    return;
+                }
+
+                const reader  = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const parts = buffer.split('\n\n');
+                        buffer = parts.pop();
+                        for (const part of parts) {
+                            const line = part.trim();
+                            if (line.startsWith('data:')) {
+                                try { handleTick(ticker, JSON.parse(line.slice(5).trim())); } catch (_) {}
+                            }
+                        }
+                    }
+                } catch (e) {
+                    if (controller.signal.aborted) return;
+                }
+                if (!controller.signal.aborted) setTimeout(run, 3000);
+            };
+
+            run();
+        }
+
         function stopLiveStream(ticker) {
-            if (activeStreams[ticker]) {
-                activeStreams[ticker].close();
-                delete activeStreams[ticker];
-            }
+            const ctrl = activeStreams[ticker];
+            if (ctrl) { ctrl.abort(); delete activeStreams[ticker]; }
 
             const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
             if (indicatorEl) indicatorEl.style.display = 'none';
@@ -1913,18 +1949,16 @@
             const badge = document.getElementById(`streamBadge_${ticker}`);
             if (badge) {
                 badge.style.background = 'rgba(55, 65, 81, 0.8)';
-                badge.style.animation = 'none';
+                badge.style.animation  = 'none';
                 badge.title = 'Click to start stream';
             }
-
             const bidAskBox = document.getElementById(`liveBidAsk_${ticker}`);
             if (bidAskBox) bidAskBox.style.display = 'none';
-
             const rangeBox = document.getElementById(`liveRange_${ticker}`);
             if (rangeBox) rangeBox.style.display = 'none';
         }
 
-        // Clean up streams when navigating away
+        // Clean up on page unload
         window.addEventListener('beforeunload', () => {
             Object.keys(activeStreams).forEach(stopLiveStream);
         });
