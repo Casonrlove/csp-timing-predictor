@@ -1124,36 +1124,26 @@
                         <table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:12px;">
                             <thead>
                                 <tr style="color:#718096;border-bottom:1px solid #30363d;">
-                                    <th style="text-align:left;padding:4px 6px;font-weight:500;">Metric</th>
-                                    <th style="text-align:right;padding:4px 6px;font-weight:500;">Value</th>
-                                    <th style="text-align:left;padding:4px 6px 4px 20px;font-weight:500;">Metric</th>
-                                    <th style="text-align:right;padding:4px 6px;font-weight:500;">Value</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">Support</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">Resistance</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">SMA20</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">SMA50</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">SMA200</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">RSI</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">ATR</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">VIX</th>
                                 </tr>
                             </thead>
-                            <tbody style="color:#e2e8f0;">
-                                <tr>
-                                    <td style="padding:3px 6px;color:#718096;">Support</td>
-                                    <td style="padding:3px 6px;text-align:right;">${data.technical_context.support_resistance.distance_from_support.toFixed(2)}%</td>
-                                    <td style="padding:3px 6px 3px 20px;color:#718096;">SMA20</td>
-                                    <td style="padding:3px 6px;text-align:right;">${data.technical_context.moving_averages.price_to_sma20.toFixed(2)}%</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding:3px 6px;color:#718096;">Resistance</td>
-                                    <td style="padding:3px 6px;text-align:right;">${data.technical_context.support_resistance.distance_from_resistance.toFixed(2)}%</td>
-                                    <td style="padding:3px 6px 3px 20px;color:#718096;">SMA50</td>
-                                    <td style="padding:3px 6px;text-align:right;">${data.technical_context.moving_averages.price_to_sma50.toFixed(2)}%</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding:3px 6px;color:#718096;">RSI</td>
-                                    <td style="padding:3px 6px;text-align:right;">${data.technical_context.momentum.rsi.toFixed(2)}</td>
-                                    <td style="padding:3px 6px 3px 20px;color:#718096;">SMA200</td>
-                                    <td style="padding:3px 6px;text-align:right;">${data.technical_context.moving_averages.price_to_sma200.toFixed(2)}%</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding:3px 6px;color:#718096;">ATR</td>
-                                    <td style="padding:3px 6px;text-align:right;">${data.technical_context.volatility.atr_pct.toFixed(2)}%</td>
-                                    <td style="padding:3px 6px 3px 20px;color:#718096;">VIX</td>
-                                    <td style="padding:3px 6px;text-align:right;">${data.technical_context.volatility.vix.toFixed(2)}</td>
+                            <tbody>
+                                <tr style="color:#e2e8f0;text-align:center;">
+                                    <td style="padding:4px 8px;">${data.technical_context.support_resistance.distance_from_support.toFixed(2)}%</td>
+                                    <td style="padding:4px 8px;">${data.technical_context.support_resistance.distance_from_resistance.toFixed(2)}%</td>
+                                    <td style="padding:4px 8px;">${data.technical_context.moving_averages.price_to_sma20.toFixed(2)}%</td>
+                                    <td style="padding:4px 8px;">${data.technical_context.moving_averages.price_to_sma50.toFixed(2)}%</td>
+                                    <td style="padding:4px 8px;">${data.technical_context.moving_averages.price_to_sma200.toFixed(2)}%</td>
+                                    <td style="padding:4px 8px;">${data.technical_context.momentum.rsi.toFixed(2)}</td>
+                                    <td style="padding:4px 8px;">${data.technical_context.volatility.atr_pct.toFixed(2)}%</td>
+                                    <td style="padding:4px 8px;">${data.technical_context.volatility.vix.toFixed(2)}</td>
                                 </tr>
                             </tbody>
                         </table>
