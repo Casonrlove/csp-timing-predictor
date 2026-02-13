@@ -54,3 +54,4 @@ Thumbs.db
 *.swp
 *~
 schwab_config.json
+*.log
