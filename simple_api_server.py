@@ -1211,6 +1211,7 @@ def predict(request: PredictionRequest):
                             and opt.get('edge_prob') is not None
                             and abs(opt['edge_prob']) >= MIN_EDGE_PROB  # no-trade band for weak edge
                             and abs(opt.get('delta', 0)) <= 0.4  # cap delta at 0.40
+                            and 20 <= opt.get('dte', 0) <= 50  # 20-50 DTE window
                         ]
                         if ev_candidates:
                             best_option = max(ev_candidates, key=lambda x: x.get('risk_adjusted_ev', -1e9))

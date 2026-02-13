@@ -1128,53 +1128,6 @@
                             return _ema(_px, null, null, null);
                         })()}
 
-                        ${data.options_data && data.options_data.edge > 0 ? `
-                        <div class="technical-section" style="background: rgba(22, 27, 34, 0.8); padding: 12px 15px; border-radius: 8px; margin-top: 15px; border: 1px solid #30363d;">
-                            <h4 style="color: #58a6ff; margin: 0 0 10px 0; font-size: 0.9rem;">📈 Suggested CSP Trade</h4>
-                            <div style="overflow-x: auto;">
-                            <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
-                                <thead>
-                                    <tr style="background: var(--bg-row-alt);">
-                                        <th style="padding:6px 8px;text-align:left;color:var(--text-secondary);">Strike</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Bid</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Ask</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Delta</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Model</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Edge</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">ROR</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">θ Eff</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Theta</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Vol</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Gamma</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Vega</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Last</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">Mid</th>
-                                        <th style="padding:6px 8px;text-align:right;color:var(--text-secondary);">IV</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr style="border-bottom:1px solid var(--border-color);background:rgba(128,90,213,0.25);border-left:3px solid var(--accent-purple);">
-                                        <td style="padding:6px 8px;color:var(--text-strike);"><strong>$${data.options_data.strike.toFixed(2)}</strong> ⭐</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.bid.toFixed(2)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ask.toFixed(2)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.delta.toFixed(2)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:var(--accent-blue);">${data.options_data.model_prob_assignment.toFixed(2)}</td>
-                                        <td style="padding:6px 8px;text-align:right;font-weight:bold;color:var(${data.options_data.edge > 0 ? '--positive-green' : '--negative-red'});">${data.options_data.edge > 0 ? '+' : ''}${data.options_data.edge.toFixed(1)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ror.toFixed(1)}%</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta_efficiency ? data.options_data.theta_efficiency.toFixed(3) : '-'}%</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta.toFixed(2)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.volume.toLocaleString()}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.gamma.toFixed(3)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.vega.toFixed(2)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.last.toFixed(2)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.premium.toFixed(2)}</td>
-                                        <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.implied_volatility * 100).toFixed(0)}%</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                            </div>
-                        </div>
-                        ` : ''}
 
                         ${data.options_by_expiration && data.available_expirations && data.available_expirations.length > 0 ? `
                         <div style="margin-top: 20px; background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color);">
@@ -1232,6 +1185,31 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
+                                                ${data.options_data && data.options_data.edge > 0 && data.options_data.expiration === exp ? `
+                                                <tr style="background: rgba(128,90,213,0.08); border-bottom: 1px solid #30363d;">
+                                                    <td colspan="15" style="padding: 4px 8px; font-size: 0.72rem; color: var(--accent-purple); font-weight: 600; letter-spacing: 0.05em;">⭐ SUGGESTED TRADE</td>
+                                                </tr>
+                                                <tr style="border-bottom: 2px solid var(--accent-purple); background: rgba(128,90,213,0.25); border-left: 3px solid var(--accent-purple);">
+                                                    <td style="padding:6px 8px;color:var(--text-strike);"><strong>$${data.options_data.strike.toFixed(2)}</strong></td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.bid.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ask.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.delta.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:var(--accent-blue);">${data.options_data.model_prob_assignment.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;font-weight:bold;color:var(--positive-green);">+${data.options_data.edge.toFixed(1)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ror.toFixed(1)}%</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta_efficiency ? data.options_data.theta_efficiency.toFixed(3) : '-'}%</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.volume.toLocaleString()}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.gamma.toFixed(3)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.vega.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.last.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.premium.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.implied_volatility * 100).toFixed(0)}%</td>
+                                                </tr>
+                                                <tr style="background: rgba(128,90,213,0.04); border-bottom: 1px solid #30363d;">
+                                                    <td colspan="15" style="padding: 3px 8px; font-size: 0.72rem; color: #718096; letter-spacing: 0.04em;">ALL STRIKES</td>
+                                                </tr>
+                                                ` : ''}
                                                 ${expData.options.map((opt, rowIdx) => {
                                                     const isITM = opt.strike > data.current_price;
                                                     const rowBg = opt.is_suggested ? 'rgba(128, 90, 213, 0.25)' : isITM ? 'var(--bg-row-itm)' : 'var(--bg-row-otm)';
