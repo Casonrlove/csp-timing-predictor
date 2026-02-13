@@ -5,8 +5,10 @@ Supports both Schwab API (preferred) and Yahoo Finance (fallback) for options da
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
+import asyncio
 import uvicorn
 import joblib
 import json
@@ -37,7 +39,8 @@ try:
         is_market_open,
         get_market_hours,
         get_stock_price,
-        get_quotes
+        get_quotes,
+        get_price_history,
     )
     SCHWAB_AVAILABLE = True
     print("✓ Schwab API client loaded")
@@ -116,6 +119,22 @@ TIMING_THRESHOLDS = None
 TIMING_GROUP_MAPPING = None
 PER_TICKER_MODE = False
 
+# Contract model components (highest priority — unified strike-breach prediction)
+CONTRACT_MODE = False
+CONTRACT_BASE_MODELS = None
+CONTRACT_META_LEARNERS = None
+CONTRACT_META_SCALERS = None
+CONTRACT_CALIBRATORS = None
+CONTRACT_SCALERS = None
+CONTRACT_GROUP_MAPPING = None
+CONTRACT_FEATURE_COLS = None      # 56 market + 7 contract
+CONTRACT_MARKET_FEATURE_COLS = None
+CONTRACT_CONTRACT_FEATURE_COLS = None
+CONTRACT_VIX_BOUNDARY = 18.0
+CONTRACT_FORWARD_DAYS = 35
+MIN_EDGE_PP = 1.0
+MIN_EDGE_PROB = MIN_EDGE_PP / 100.0
+
 # Ensemble V3 components (loaded preferentially over per-ticker model)
 ENSEMBLE_MODE = False
 ENSEMBLE_BASE_MODELS = None    # {'{group}_{regime}': {'xgb': ..., 'lgbm': ...}}
@@ -128,9 +147,39 @@ ENSEMBLE_GROUP_MAPPING = None
 ENSEMBLE_VIX_BOUNDARY = 18.0
 ENSEMBLE_FEATURE_COLS = None
 
-# Try ensemble model first (highest priority)
+# Try contract model first (highest priority — unified breach prediction)
+contract_path = 'csp_contract_model.pkl'
+if os.path.exists(contract_path):
+    try:
+        print(f"Loading contract model from {contract_path}...")
+        contract_data = joblib.load(contract_path)
+        if contract_data.get('contract_model'):
+            CONTRACT_BASE_MODELS = contract_data['base_models']
+            CONTRACT_META_LEARNERS = contract_data['meta_learners']
+            CONTRACT_META_SCALERS = contract_data.get('meta_scalers', {})
+            CONTRACT_CALIBRATORS = contract_data.get('calibrators', {})
+            CONTRACT_SCALERS = contract_data['scalers']
+            CONTRACT_GROUP_MAPPING = contract_data['group_mapping']
+            CONTRACT_VIX_BOUNDARY = contract_data.get('vix_boundary', 18.0)
+            CONTRACT_FORWARD_DAYS = int(contract_data.get('forward_days', 35))
+            CONTRACT_FEATURE_COLS = contract_data['feature_cols']
+            CONTRACT_MARKET_FEATURE_COLS = contract_data.get('market_feature_cols', [])
+            CONTRACT_CONTRACT_FEATURE_COLS = contract_data.get('contract_feature_cols', [])
+            FEATURE_NAMES = CONTRACT_MARKET_FEATURE_COLS  # For prepare_inference_features
+            CONTRACT_MODE = True
+            MODEL_PATH = contract_path
+            n_cal = len(CONTRACT_CALIBRATORS)
+            print(f"  Contract model loaded: {sorted(CONTRACT_BASE_MODELS.keys())}")
+            print(f"  Features: {len(CONTRACT_FEATURE_COLS)} ({len(CONTRACT_MARKET_FEATURE_COLS)} market + {len(CONTRACT_CONTRACT_FEATURE_COLS)} contract)")
+            if n_cal:
+                print(f"  Calibrators: {n_cal}, Meta-scalers: {len(CONTRACT_META_SCALERS)}")
+    except Exception as e:
+        print(f"  Failed to load contract model: {e}")
+        CONTRACT_MODE = False
+
+# Try ensemble model next (second priority)
 ensemble_path = 'csp_timing_ensemble.pkl'
-if os.path.exists(ensemble_path):
+if not CONTRACT_MODE and os.path.exists(ensemble_path):
     try:
         print(f"Loading ensemble model from {ensemble_path}...")
         ens_data = joblib.load(ensemble_path)
@@ -156,7 +205,7 @@ if os.path.exists(ensemble_path):
         ENSEMBLE_MODE = False
 
 # Try v3 regime model next
-if not ENSEMBLE_MODE:
+if not CONTRACT_MODE and not ENSEMBLE_MODE:
     v3_path = 'csp_timing_model_v3.pkl'
     if os.path.exists(v3_path):
         try:
@@ -175,9 +224,9 @@ if not ENSEMBLE_MODE:
         except Exception as e:
             print(f"⚠ Failed to load V3 model: {e}")
 
-# Try per-ticker model next (preferred over global)
+# Try per-ticker model next (preferred over global) — skip if higher-priority model loaded
 per_ticker_path = 'csp_timing_model_per_ticker.pkl'
-if os.path.exists(per_ticker_path):
+if not CONTRACT_MODE and not ENSEMBLE_MODE and os.path.exists(per_ticker_path):
     try:
         print(f"Loading per-ticker timing model from {per_ticker_path}...")
         timing_data = joblib.load(per_ticker_path)
@@ -197,7 +246,7 @@ if os.path.exists(per_ticker_path):
         PER_TICKER_MODE = False
 
 # Fallback to global model
-if not PER_TICKER_MODE:
+if not CONTRACT_MODE and not ENSEMBLE_MODE and not PER_TICKER_MODE:
     for path in ['csp_model_multi.pkl', 'csp_model.pkl']:
         if os.path.exists(path):
             MODEL_PATH = path
@@ -353,14 +402,37 @@ def read_root():
 @app.get("/health")
 def health_check():
     """Detailed health check"""
-    if PER_TICKER_MODE:
+    if CONTRACT_MODE:
+        return {
+            "status": "healthy",
+            "model_type": "contract_v1",
+            "model_loaded": True,
+            "model_file": MODEL_PATH,
+            "groups": sorted(CONTRACT_BASE_MODELS.keys()) if CONTRACT_BASE_MODELS else [],
+            "feature_count": len(CONTRACT_FEATURE_COLS) if CONTRACT_FEATURE_COLS else 0,
+            "market_features": len(CONTRACT_MARKET_FEATURE_COLS) if CONTRACT_MARKET_FEATURE_COLS else 0,
+            "contract_features": len(CONTRACT_CONTRACT_FEATURE_COLS) if CONTRACT_CONTRACT_FEATURE_COLS else 0,
+            "calibrators": len(CONTRACT_CALIBRATORS) if CONTRACT_CALIBRATORS else 0,
+            "timestamp": datetime.now().isoformat()
+        }
+    elif ENSEMBLE_MODE:
+        return {
+            "status": "healthy",
+            "model_type": "ensemble_v3",
+            "model_loaded": True,
+            "model_file": MODEL_PATH,
+            "groups": sorted(ENSEMBLE_BASE_MODELS.keys()) if ENSEMBLE_BASE_MODELS else [],
+            "feature_count": len(ENSEMBLE_FEATURE_COLS) if ENSEMBLE_FEATURE_COLS else 0,
+            "calibrators": len(ENSEMBLE_CALIBRATORS) if ENSEMBLE_CALIBRATORS else 0,
+            "timestamp": datetime.now().isoformat()
+        }
+    elif PER_TICKER_MODE:
         return {
             "status": "healthy",
             "model_type": "per_ticker",
             "model_loaded": True,
             "model_file": MODEL_PATH,
             "groups": list(TIMING_MODELS.keys()) if TIMING_MODELS else [],
-            "thresholds": TIMING_THRESHOLDS if TIMING_THRESHOLDS else {},
             "feature_count": len(FEATURE_NAMES) if FEATURE_NAMES else 0,
             "timestamp": datetime.now().isoformat()
         }
@@ -383,8 +455,44 @@ def reload_model():
     global ENSEMBLE_MODE, ENSEMBLE_BASE_MODELS, ENSEMBLE_META_LEARNERS
     global ENSEMBLE_META_SCALERS, ENSEMBLE_CALIBRATORS
     global ENSEMBLE_SCALERS, ENSEMBLE_THRESHOLDS, ENSEMBLE_GROUP_MAPPING, ENSEMBLE_FEATURE_COLS
+    global CONTRACT_MODE, CONTRACT_BASE_MODELS, CONTRACT_META_LEARNERS
+    global CONTRACT_META_SCALERS, CONTRACT_CALIBRATORS, CONTRACT_SCALERS
+    global CONTRACT_GROUP_MAPPING, CONTRACT_FEATURE_COLS, CONTRACT_MARKET_FEATURE_COLS
+    global CONTRACT_CONTRACT_FEATURE_COLS, CONTRACT_VIX_BOUNDARY, CONTRACT_FORWARD_DAYS
 
-    # Try ensemble first (highest priority)
+    # Try contract model first (highest priority)
+    contract_path = 'csp_contract_model.pkl'
+    if os.path.exists(contract_path):
+        try:
+            cdata = joblib.load(contract_path)
+            if cdata.get('contract_model'):
+                CONTRACT_BASE_MODELS = cdata['base_models']
+                CONTRACT_META_LEARNERS = cdata['meta_learners']
+                CONTRACT_META_SCALERS = cdata.get('meta_scalers', {})
+                CONTRACT_CALIBRATORS = cdata.get('calibrators', {})
+                CONTRACT_SCALERS = cdata['scalers']
+                CONTRACT_GROUP_MAPPING = cdata['group_mapping']
+                CONTRACT_VIX_BOUNDARY = cdata.get('vix_boundary', 18.0)
+                CONTRACT_FORWARD_DAYS = int(cdata.get('forward_days', 35))
+                CONTRACT_FEATURE_COLS = cdata['feature_cols']
+                CONTRACT_MARKET_FEATURE_COLS = cdata.get('market_feature_cols', [])
+                CONTRACT_CONTRACT_FEATURE_COLS = cdata.get('contract_feature_cols', [])
+                FEATURE_NAMES = CONTRACT_MARKET_FEATURE_COLS
+                CONTRACT_MODE = True
+                ENSEMBLE_MODE = False
+                PER_TICKER_MODE = True  # suppress global fallback
+                MODEL_PATH = contract_path
+                return {
+                    "status": "success",
+                    "message": f"Contract model reloaded from {contract_path}",
+                    "model_type": "Contract V1 (XGB+LGBM+Meta, breach prediction)",
+                    "keys": sorted(CONTRACT_BASE_MODELS.keys()),
+                    "timestamp": datetime.now().isoformat()
+                }
+        except Exception as e:
+            print(f"  Failed to reload contract model: {e}")
+
+    # Try ensemble next (second priority)
     ensemble_path = 'csp_timing_ensemble.pkl'
     if os.path.exists(ensemble_path):
         try:
@@ -486,6 +594,168 @@ def market_hours():
         }
 
 
+@app.get("/stream/{ticker}")
+async def stream_ticker(
+    ticker: str,
+    interval: int = 10,
+    include_options: bool = False,
+    min_delta: float = 0.10,
+    max_delta: float = 0.60,
+    options_interval: int = 30,
+):
+    """Stream live quote + optional options data via Server-Sent Events.
+
+    Sends two event types:
+      {"type": "price",   "symbol": ..., "price": ..., ...}
+      {"type": "options", "symbol": ..., "options": [...]}  (if include_options=true)
+
+    Price is polled every `interval` seconds (default 10, min 5).
+    Options are polled every `options_interval` seconds (default 30).
+    """
+    ticker = ticker.upper()
+    price_interval  = max(interval, 5)
+    opt_ticks_every = max(1, options_interval // price_interval)
+
+    async def event_generator():
+        last_price = None
+        tick = 0
+        while True:
+            try:
+                if not SCHWAB_AVAILABLE:
+                    yield f"data: {json.dumps({'error': 'Schwab API not available'})}\n\n"
+                    return
+
+                # --- Price tick (every interval) ---
+                quote = get_stock_price(ticker)
+                price_payload = {
+                    "type": "price",
+                    "symbol": ticker,
+                    "price": quote["price"],
+                    "change": quote["change"],
+                    "change_percent": quote["change_percent"],
+                    "bid": quote["bid"],
+                    "ask": quote["ask"],
+                    "high": quote["high"],
+                    "low": quote["low"],
+                    "volume": quote["volume"],
+                    "timestamp": datetime.now().isoformat(),
+                }
+                if quote["price"] != last_price:
+                    last_price = quote["price"]
+                    yield f"data: {json.dumps(price_payload)}\n\n"
+                else:
+                    yield f": heartbeat\n\n"
+
+                # --- Options tick (every options_interval) ---
+                tick += 1
+                if include_options and tick % opt_ticks_every == 0:
+                    try:
+                        loop = asyncio.get_event_loop()
+                        opts = await loop.run_in_executor(
+                            None,
+                            lambda: get_csp_options_schwab(ticker, min_delta=min_delta, max_delta=max_delta)
+                        )
+                        if opts:
+                            yield f"data: {json.dumps({'type': 'options', 'symbol': ticker, 'options': opts, 'timestamp': datetime.now().isoformat()})}\n\n"
+                    except Exception as opt_err:
+                        print(f"[Stream] Options fetch error for {ticker}: {opt_err}")
+
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            await asyncio.sleep(price_interval)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/chart/{ticker}")
+async def get_chart_data(ticker: str, range: int = 22):
+    """Return OHLC candles for charting.
+
+    range: 5=1W (30-min bars via Schwab), 22=1M, 66=3M, 132=6M (daily bars).
+    Falls back to collector daily data when Schwab is unavailable.
+    """
+    ticker = ticker.upper()
+    try:
+        if SCHWAB_AVAILABLE:
+            if range <= 5:
+                raw = get_price_history(
+                    ticker, period_type="day", period=5,
+                    frequency_type="minute", frequency=30,
+                )
+                fmt = "%Y-%m-%d %H:%M"
+            elif range <= 22:
+                raw = get_price_history(
+                    ticker, period_type="month", period=1,
+                    frequency_type="daily", frequency=1,
+                )
+                fmt = "%Y-%m-%d"
+            elif range <= 66:
+                raw = get_price_history(
+                    ticker, period_type="month", period=3,
+                    frequency_type="daily", frequency=1,
+                )
+                fmt = "%Y-%m-%d"
+            else:
+                raw = get_price_history(
+                    ticker, period_type="month", period=6,
+                    frequency_type="daily", frequency=1,
+                )
+                fmt = "%Y-%m-%d"
+
+            candles = []
+            for c in raw.get("candles", []):
+                ts = c.get("datetime", 0)
+                dt = datetime.fromtimestamp(ts / 1000)
+                candles.append({
+                    "date": dt.strftime(fmt),
+                    "open": round(float(c.get("open", 0)), 2),
+                    "high": round(float(c.get("high", 0)), 2),
+                    "low": round(float(c.get("low", 0)), 2),
+                    "close": round(float(c.get("close", 0)), 2),
+                    "volume": int(c.get("volume", 0)),
+                })
+            return {
+                "ticker": ticker,
+                "candles": candles,
+                "frequency": "intraday" if range <= 5 else "daily",
+                "range": range,
+            }
+
+        # Schwab unavailable — serve collector daily data
+        collector = CSPDataCollector(ticker)
+        collector.fetch_data(period="6mo")
+        hist_df = collector.data.tail(range)
+        candles = []
+        for idx, row in hist_df.iterrows():
+            date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
+            candles.append({
+                "date": date_str,
+                "open": round(float(row.get("Open", row["Close"])), 2),
+                "high": round(float(row["High"]), 2),
+                "low": round(float(row["Low"]), 2),
+                "close": round(float(row["Close"]), 2),
+                "volume": int(row.get("Volume", 0)),
+            })
+        return {
+            "ticker": ticker,
+            "candles": candles,
+            "frequency": "daily",
+            "range": range,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 @app.get("/token/status")
 def token_status():
     """Check Schwab token expiration status"""
@@ -560,7 +830,7 @@ def market_status():
 @app.post("/predict", response_model=PredictionResponse)
 def predict(request: PredictionRequest):
     """Make CSP timing prediction for a single ticker"""
-    if MODEL is None and not PER_TICKER_MODE and not ENSEMBLE_MODE:
+    if MODEL is None and not PER_TICKER_MODE and not ENSEMBLE_MODE and not CONTRACT_MODE:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
     try:
@@ -572,7 +842,8 @@ def predict(request: PredictionRequest):
         collector = CSPDataCollector(ticker, period='2y')
         collector.fetch_data()
         collector.calculate_technical_indicators()
-        collector.create_target_variable(forward_days=35, strike_otm_pct=0.05)
+        feature_forward_days = CONTRACT_FORWARD_DAYS if CONTRACT_MODE else 35
+        collector.create_target_variable(forward_days=feature_forward_days, strike_otm_pct=0.05)
 
         # Generate LSTM features if model requires them
         if LSTM_GENERATOR is not None:
@@ -600,15 +871,114 @@ def predict(request: PredictionRequest):
 
         # Determine VIX regime from current data
         current_vix = float(features_df.iloc[-1].get('VIX', 15.0))
-        vix_regime = 'low_vix' if current_vix < ENSEMBLE_VIX_BOUNDARY else 'high_vix'
+        vix_boundary = CONTRACT_VIX_BOUNDARY if CONTRACT_MODE else ENSEMBLE_VIX_BOUNDARY
+        vix_regime = 'low_vix' if current_vix < vix_boundary else 'high_vix'
 
-        # ---- Ensemble V3 dispatch (highest priority) ----
-        if ENSEMBLE_MODE:
+        # ---- Contract model dispatch (highest priority) ----
+        if CONTRACT_MODE:
+            from scipy.stats import norm as _norm
+            group = CONTRACT_GROUP_MAPPING.get(ticker, 'tech_growth')
+            model_key = f'{group}_{vix_regime}'
+            if model_key not in CONTRACT_SCALERS:
+                alt_key = f'{group}_low_vix' if vix_regime == 'high_vix' else f'{group}_high_vix'
+                model_key = alt_key if alt_key in CONTRACT_SCALERS else group
+
+            scaler = CONTRACT_SCALERS[model_key]
+            base = CONTRACT_BASE_MODELS[model_key]
+            meta = CONTRACT_META_LEARNERS[model_key]
+
+            # Get market state values for contract feature construction
+            fc_market = CONTRACT_MARKET_FEATURE_COLS
+            def _mfeat(name, default=0.0):
+                return float(X_current[0, fc_market.index(name)] if name in fc_market else default)
+
+            rv_val = max(_mfeat('Volatility_20D', 20.0) / 100.0, 0.01)
+            ivrr = max(min(_mfeat('IV_RV_Ratio', 1.2), 2.5), 1.0)
+            vol_est = rv_val * ivrr
+            T_val = float(CONTRACT_FORWARD_DAYS) / 365.0
+            vix_val = _mfeat('VIX', 15.0)
+            iv_rank_val = _mfeat('IV_Rank', 50.0)
+            rsi_val = _mfeat('RSI', 50.0)
+            atr_pct_val = _mfeat('ATR_Pct', 1.0)
+            regime_val = _mfeat('Regime_Trend', 1.0)
+
+            # Evaluate P(breach) for each contract; used later for EV-based selection
+            contract_breach_probs = {}  # {delta: p_breach}
+            delta_buckets = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
+
+            for target_delta in delta_buckets:
+                # Delta-to-OTM conversion
+                try:
+                    strike_otm = vol_est * np.sqrt(T_val) * _norm.ppf(1 - target_delta)
+                    strike_otm = max(0.01, min(0.30, strike_otm))
+                except Exception:
+                    strike_otm = target_delta * 0.30
+
+                # Build 7 contract features
+                contract_feats = {
+                    'target_delta': target_delta,
+                    'delta_x_vol': target_delta * vol_est,
+                    'delta_x_vix': target_delta * vix_val / 100.0,
+                    'delta_x_iv_rank': target_delta * iv_rank_val / 100.0,
+                    'delta_squared': target_delta ** 2,
+                    'delta_x_rsi': target_delta * rsi_val / 100.0,
+                    'strike_otm_x_atr': strike_otm * atr_pct_val,
+                }
+
+                # Concatenate market features + contract features → 63-dim vector
+                full_vec = np.zeros((1, len(CONTRACT_FEATURE_COLS)))
+                for j, col in enumerate(CONTRACT_FEATURE_COLS):
+                    if col in contract_feats:
+                        full_vec[0, j] = contract_feats[col]
+                    elif col in fc_market:
+                        full_vec[0, j] = X_current[0, fc_market.index(col)]
+                    # else: 0.0
+
+                # Route through model
+                X_sc = scaler.transform(full_vec)
+                xgb_p = base['xgb'].predict_proba(X_sc)[0, 1]
+                lgbm_p = base['lgbm'].predict_proba(X_sc)[0, 1] if base.get('lgbm') else xgb_p
+
+                fc_full = CONTRACT_FEATURE_COLS
+                def _cfeat(name, default=0.0):
+                    return float(full_vec[0, fc_full.index(name)] if name in fc_full else default)
+
+                meta_X = np.array([[
+                    xgb_p, lgbm_p,
+                    _cfeat('VIX', 15.0),
+                    _cfeat('VIX_Rank', 50.0),
+                    _cfeat('Regime_Trend', 1.0),
+                ]])
+
+                if CONTRACT_META_SCALERS and model_key in CONTRACT_META_SCALERS:
+                    meta_X = CONTRACT_META_SCALERS[model_key].transform(meta_X)
+
+                if CONTRACT_CALIBRATORS and model_key in CONTRACT_CALIBRATORS:
+                    p_breach = float(CONTRACT_CALIBRATORS[model_key].predict_proba(meta_X)[0, 1])
+                else:
+                    p_breach = float(meta.predict_proba(meta_X)[0, 1])
+
+                contract_breach_probs[target_delta] = p_breach
+
+            # Derive p_safe from delta~0.30 for backward-compatible API response
+            p_breach_ref = contract_breach_probs.get(0.30, 0.20)
+            p_safe = 1.0 - p_breach_ref
+            p_downside = p_breach_ref
+            prediction = int(p_safe >= 0.5)
+            model_type = f"Contract V1 ({group}/{vix_regime})"
+
+            # Store breach probs on collector for later use in options EV
+            collector._contract_breach_probs = contract_breach_probs
+
+            print(f"[Contract] {ticker} -> {group}/{vix_regime}  "
+                  f"P(breach|d=0.30)={p_breach_ref:.3f}  "
+                  f"P(breach) range: {min(contract_breach_probs.values()):.3f}-{max(contract_breach_probs.values()):.3f}")
+
+        # ---- Ensemble V3 dispatch ----
+        elif ENSEMBLE_MODE:
             group = ENSEMBLE_GROUP_MAPPING.get(ticker, 'tech_growth')
             model_key = f'{group}_{vix_regime}'
-            # Fallback to combined group key if regime key not found
             if model_key not in ENSEMBLE_SCALERS:
-                # Try the other regime
                 alt_key = f'{group}_low_vix' if vix_regime == 'high_vix' else f'{group}_high_vix'
                 model_key = alt_key if alt_key in ENSEMBLE_SCALERS else group
 
@@ -621,24 +991,20 @@ def predict(request: PredictionRequest):
             xgb_prob = base['xgb'].predict_proba(X_scaled)[0, 1]
             lgbm_prob = base['lgbm'].predict_proba(X_scaled)[0, 1] if base.get('lgbm') else xgb_prob
 
-            # Build meta-features [xgb_prob, lgbm_prob, VIX, VIX_Rank, Regime_Trend]
-            import numpy as _np
             fc = ENSEMBLE_FEATURE_COLS
             def _get_feat(name, default=0.0):
                 return float(X_current[0, fc.index(name)] if name in fc else default)
 
-            meta_X = _np.array([[
+            meta_X = np.array([[
                 xgb_prob, lgbm_prob,
                 _get_feat('VIX', 15.0),
                 _get_feat('VIX_Rank', 50.0),
                 _get_feat('Regime_Trend', 1.0),
             ]])
 
-            # Apply meta-scaler if available (matches training)
             if ENSEMBLE_META_SCALERS and model_key in ENSEMBLE_META_SCALERS:
                 meta_X = ENSEMBLE_META_SCALERS[model_key].transform(meta_X)
 
-            # Use calibrator if available, otherwise raw meta-learner
             if ENSEMBLE_CALIBRATORS and model_key in ENSEMBLE_CALIBRATORS:
                 p_safe = float(ENSEMBLE_CALIBRATORS[model_key].predict_proba(meta_X)[0, 1])
             else:
@@ -646,7 +1012,7 @@ def predict(request: PredictionRequest):
             p_downside = 1.0 - p_safe
             prediction = int(p_safe >= 0.5)
             model_type = f"Ensemble V3 ({group}/{vix_regime})"
-            print(f"[Ensemble] {ticker} → {group}/{vix_regime}  "
+            print(f"[Ensemble] {ticker} -> {group}/{vix_regime}  "
                   f"xgb={xgb_prob:.3f} lgbm={lgbm_prob:.3f} meta={p_safe:.3f}")
 
         # ---- Per-ticker V3 regime model ----
@@ -730,14 +1096,17 @@ def predict(request: PredictionRequest):
 
             print(f"Found {len(all_options)} options via {options_source}")
 
-            # Calculate edge using strike-specific probability model.
-            # No heuristic fallback: if strike model is unavailable, edge is not estimated.
-            use_strike_model = STRIKE_PROB_MODEL is not None and STRIKE_PROB_MODEL.model_loaded
+            # Calculate edge: contract model (preferred) or strike model (fallback)
+            use_contract_edge = CONTRACT_MODE and hasattr(collector, '_contract_breach_probs')
+            use_strike_model = (not use_contract_edge and
+                                STRIKE_PROB_MODEL is not None and STRIKE_PROB_MODEL.model_loaded)
 
-            if use_strike_model:
+            if use_contract_edge:
+                print("[Edge] Using contract model P(breach)")
+            elif use_strike_model:
                 print("[Edge] Using strike-specific probability model")
             else:
-                print("[Edge] Strike model not available - edge estimation disabled")
+                print("[Edge] No edge model available - edge estimation disabled")
 
             for option in all_options:
                 market_delta = abs(option['delta'])
@@ -746,68 +1115,78 @@ def predict(request: PredictionRequest):
                 bid = float(option.get('bid', 0.0) or 0.0)
                 ask = float(option.get('ask', 0.0) or 0.0)
 
-                # Calculate how far OTM this strike is (as percentage)
                 otm_pct = ((current_price - strike) / current_price) * 100
 
-                if use_strike_model:
-                    # Use strike-specific probability model
-                    # V2/V3: use delta directly for prediction; V1 uses strike OTM percentage.
+                model_prob = None
+
+                if use_contract_edge:
+                    # Find closest delta bucket from contract model predictions
+                    breach_probs = collector._contract_breach_probs
+                    closest_delta = min(breach_probs.keys(), key=lambda d: abs(d - market_delta))
+                    model_prob = breach_probs[closest_delta]
+
+                elif use_strike_model:
                     if STRIKE_PROB_VERSION in (2, 3):
                         model_prob = STRIKE_PROB_MODEL.predict_for_delta(collector.data, market_delta, ticker)
                     else:
-                        # V1: Use OTM percentage
                         model_prob = STRIKE_PROB_MODEL.predict_strike_probability(collector.data, otm_pct)
 
-                    if model_prob is None:
-                        option['market_delta'] = round(market_delta, 3)
-                        option['model_prob_assignment'] = None
-                        option['edge'] = None
-                        option['edge_signal'] = 'NO_EDGE_ESTIMATE'
-                        option['is_suggested'] = False
-                        continue
-
-                    # Edge = Market Delta - Model Probability
-                    # Positive edge = market overpricing risk = good for selling
-                    edge = (market_delta - model_prob) * 100
-
-                    # EV model (per share) for CSP selection:
-                    # EV = premium - expected assignment loss - slippage
-                    spread = max(0.0, ask - bid)
-                    spread_pct = (spread / premium) if premium > 0 else 1.0
-                    slippage_cost = spread * 0.25  # assume one-quarter spread execution cost
-                    assignment_loss_pct = 0.05     # baseline loss magnitude if assigned
-                    expected_assignment_loss = model_prob * strike * assignment_loss_pct
-                    expected_value = premium - expected_assignment_loss - slippage_cost
-                    timing_multiplier = 0.75 + (0.5 * p_safe)  # soft timing prior, not hard gate
-                    risk_adjusted_ev = expected_value * timing_multiplier
-
-                    option['market_delta'] = round(market_delta, 3)
-                    option['model_prob_assignment'] = round(model_prob, 3)
-                    option['edge'] = round(edge, 2)
-                    option['edge_signal'] = 'GOOD EDGE' if edge > 0 else 'NEGATIVE EDGE'
-                    option['spread_pct'] = round(spread_pct, 3)
-                    option['ev_per_share'] = round(expected_value, 4)
-                    option['ev_pct_of_strike'] = round((expected_value / strike) * 100, 3) if strike > 0 else None
-                    option['risk_adjusted_ev'] = round(risk_adjusted_ev, 4)
-                    option['is_suggested'] = False
-                else:
+                if model_prob is None:
                     option['market_delta'] = round(market_delta, 3)
                     option['model_prob_assignment'] = None
                     option['edge'] = None
-                    option['edge_signal'] = 'NO_EDGE_MODEL'
+                    option['edge_prob'] = None
+                    option['edge_pp'] = None
+                    option['edge_signal'] = 'NO_EDGE_ESTIMATE' if not use_contract_edge else 'NO_EDGE_MODEL'
                     option['spread_pct'] = None
                     option['ev_per_share'] = None
                     option['ev_pct_of_strike'] = None
                     option['risk_adjusted_ev'] = None
                     option['is_suggested'] = False
+                    continue
+
+                # Edge in both unit systems:
+                #   edge_prob: probability units (0.01 = 1 percentage point)
+                #   edge_pp: percentage points
+                edge_prob = market_delta - model_prob
+                edge_pp = edge_prob * 100.0
+
+                # EV model
+                spread = max(0.0, ask - bid)
+                spread_pct = (spread / premium) if premium > 0 else 1.0
+                slippage_cost = spread * 0.25
+                assignment_loss_pct = 0.05
+                expected_assignment_loss = model_prob * strike * assignment_loss_pct
+                expected_value = premium - expected_assignment_loss - slippage_cost
+
+                # Contract model: timing is embedded, no timing_multiplier needed
+                if use_contract_edge:
+                    risk_adjusted_ev = expected_value
+                else:
+                    timing_multiplier = 0.75 + (0.5 * p_safe)
+                    risk_adjusted_ev = expected_value * timing_multiplier
+
+                option['market_delta'] = round(market_delta, 3)
+                option['model_prob_assignment'] = round(model_prob, 3)
+                option['edge_prob'] = round(edge_prob, 4)
+                option['edge_pp'] = round(edge_pp, 2)
+                option['edge'] = option['edge_pp']  # legacy alias
+                option['edge_signal'] = 'GOOD EDGE' if edge_prob > 0 else 'NEGATIVE EDGE'
+                option['spread_pct'] = round(spread_pct, 3)
+                option['ev_per_share'] = round(expected_value, 4)
+                option['ev_pct_of_strike'] = round((expected_value / strike) * 100, 3) if strike > 0 else None
+                option['risk_adjusted_ev'] = round(risk_adjusted_ev, 4)
+                option['is_suggested'] = False
 
             # Select best option via EV optimization with uncertainty no-trade band.
+            has_edge_model = use_contract_edge or use_strike_model
             if all_options:
-                if not use_strike_model:
+                if not has_edge_model:
                     options_data = None
                     print("No calibrated edge model - EV ranking unavailable, no suggestion")
                 else:
-                    timing_uncertain = abs(csp_score) < 0.15
+                    # Contract mode embeds timing — skip the timing uncertainty gate
+                    timing_uncertain = (not use_contract_edge) and abs(csp_score) < 0.15
                     near_earnings = bool(current_data.get('Near_Earnings', False))
                     days_to_earnings = float(current_data.get('Days_To_Earnings', 999))
 
@@ -827,8 +1206,8 @@ def predict(request: PredictionRequest):
                             and opt['risk_adjusted_ev'] > 0
                             and opt.get('spread_pct') is not None
                             and opt['spread_pct'] <= 0.20
-                            and opt.get('edge') is not None
-                            and abs(opt['edge']) >= 1.0  # no-trade band for weak edge
+                            and opt.get('edge_prob') is not None
+                            and abs(opt['edge_prob']) >= MIN_EDGE_PROB  # no-trade band for weak edge
                         ]
                         if ev_candidates:
                             best_option = max(ev_candidates, key=lambda x: x.get('risk_adjusted_ev', -1e9))
@@ -970,7 +1349,7 @@ def predict(request: PredictionRequest):
 
         # Log prediction for forward validation
         try:
-            _log_prediction(
+            log_kwargs = dict(
                 ticker=ticker,
                 price=current_price,
                 p_safe=p_safe,
@@ -979,6 +1358,14 @@ def predict(request: PredictionRequest):
                 suggested_strike=options_data['strike'] if options_data else None,
                 suggested_expiration=options_data['expiration'] if options_data else None,
             )
+            if CONTRACT_MODE:
+                log_kwargs['model_version'] = 'contract_v1'
+                log_kwargs['label_forward_days'] = int(CONTRACT_FORWARD_DAYS)
+                if options_data:
+                    log_kwargs['model_p_breach'] = options_data.get('model_prob_assignment')
+                    log_kwargs['suggested_delta'] = abs(options_data.get('delta', 0))
+                    log_kwargs['suggested_otm_pct'] = ((current_price - options_data.get('strike', current_price)) / current_price) if current_price > 0 else None
+            _log_prediction(**log_kwargs)
         except Exception as log_err:
             print(f"Failed to log prediction: {log_err}")
 
@@ -1096,7 +1483,10 @@ def _save_predictions_log(data):
 
 
 def _log_prediction(ticker, price, p_safe, p_downside, csp_score,
-                    suggested_strike=None, suggested_expiration=None):
+                    suggested_strike=None, suggested_expiration=None,
+                    model_p_breach=None, suggested_delta=None,
+                    suggested_otm_pct=None, model_version=None,
+                    label_forward_days=None):
     entry = {
         "timestamp": datetime.now().isoformat(),
         "ticker": ticker,
@@ -1110,6 +1500,17 @@ def _log_prediction(ticker, price, p_safe, p_downside, csp_score,
         "outcome": None,
         "outcome_date": None,
     }
+    # Contract model extended fields
+    if model_p_breach is not None:
+        entry["model_p_breach"] = float(model_p_breach)
+    if suggested_delta is not None:
+        entry["suggested_delta"] = float(suggested_delta)
+    if suggested_otm_pct is not None:
+        entry["suggested_otm_pct"] = float(suggested_otm_pct)
+    if model_version is not None:
+        entry["model_version"] = model_version
+    if label_forward_days is not None:
+        entry["label_forward_days"] = int(label_forward_days)
     with _log_lock:
         data = _load_predictions_log()
         data["predictions"].append(entry)
