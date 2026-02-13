@@ -1218,7 +1218,7 @@
                                                     <td style="padding:6px 8px;text-align:right;color:var(--accent-blue);">${data.options_data.model_prob_assignment.toFixed(2)}</td>
                                                     <td style="padding:6px 8px;text-align:right;font-weight:bold;color:var(--positive-green);">+${data.options_data.edge.toFixed(1)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ror.toFixed(1)}%</td>
-                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ev_per_share != null ? '$' + data.options_data.ev_per_share.toFixed(2) : '-'}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:var(--accent-purple);">${data.options_data.ev_per_share != null ? '$' + data.options_data.ev_per_share.toFixed(2) : '-'}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta_efficiency ? data.options_data.theta_efficiency.toFixed(3) : '-'}%</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta.toFixed(2)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.vega.toFixed(2)}</td>
@@ -1244,7 +1244,7 @@
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment != null ? opt.model_prob_assignment.toFixed(2) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge != null ? opt.edge.toFixed(1) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ror.toFixed(1)}%</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ev_per_share != null ? '$' + opt.ev_per_share.toFixed(2) : '-'}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: var(--accent-purple);">${opt.ev_per_share != null ? '$' + opt.ev_per_share.toFixed(2) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta_efficiency ? opt.theta_efficiency.toFixed(3) : '-'}%</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.vega.toFixed(2)}</td>
@@ -1800,7 +1800,7 @@
                             <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-otm);">
                                 <td style="padding: 8px 15px; color: var(--text-secondary);">EV</td>
                                 ${tickerData.map(d => `
-                                    <td style="padding: 8px 15px; text-align: center; color: ${d.opt && d.opt.ev_per_share > 0 ? 'var(--positive-green)' : 'var(--negative-red)'};">
+                                    <td style="padding: 8px 15px; text-align: center; color: var(--accent-purple);">
                                         ${d.opt && d.opt.ev_per_share != null ? '$' + d.opt.ev_per_share.toFixed(2) : '-'}
                                     </td>
                                 `).join('')}
