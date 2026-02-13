@@ -6,6 +6,7 @@
     <title>CSP Timing Predictor</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial"></script>
     <script>
         // ============================================
         // THEME SELECTOR - Change this value to switch themes
@@ -1401,9 +1402,9 @@
 
             resultDiv.innerHTML = html;
 
-            // Render price chart if data available
+            // Render price chart if data available (async — fetches OHLC candles)
             if (data.price_history && data.price_history.length > 0) {
-                renderPriceChart(data);
+                initPriceChart(data, data.ticker);
             }
         }
 
@@ -1429,13 +1430,41 @@
             return out;
         }
 
+        // Convert "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" to millisecond timestamp
+        function toTs(dateStr) {
+            if (dateStr.includes(' ')) {
+                return new Date(dateStr.replace(' ', 'T') + ':00').getTime();
+            }
+            // Use noon UTC to avoid DST/timezone date-shifts
+            return new Date(dateStr + 'T12:00:00Z').getTime();
+        }
+
+        async function initPriceChart(data, ticker) {
+            try {
+                const apiUrl = getApiUrl();
+                const resp = await fetch(`${apiUrl}/chart/${ticker}?range=22`, {
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                });
+                if (resp.ok) {
+                    const cd = await resp.json();
+                    if (cd.candles && cd.candles.length > 0) {
+                        const candles = aggregateCandles(cd.candles, 12); // 30min → 6hr
+                        renderPriceChart(data, 22, candles);
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('Initial chart fetch failed, using daily close data:', e);
+            }
+            renderPriceChart(data, 22);
+        }
+
         async function setChartRange(ticker, days) {
             if (!chartFullData) return;
 
             currentChartRange = days;
             const styles = getComputedStyle(document.documentElement);
 
-            // Update button styles
             const buttons = document.querySelectorAll(`#chartRangeButtons_${ticker} .range-btn`);
             buttons.forEach(btn => {
                 if (parseInt(btn.dataset.range) === days) {
@@ -1449,282 +1478,179 @@
                 }
             });
 
-            // 1W: 30-min candles | 1M: 6hr candles (12×30min) | 6M: daily candles
-            if (days === 5 || days === 22 || days === 132) {
-                try {
-                    const apiUrl = getApiUrl();
-                    const resp = await fetch(`${apiUrl}/chart/${ticker}?range=${days}`, {
-                        headers: { 'ngrok-skip-browser-warning': 'true' }
-                    });
-                    if (resp.ok) {
-                        const cd = await resp.json();
-                        if (cd.candles && cd.candles.length > 0) {
-                            // 1M: aggregate 30-min → 6hr (12 bars per 6 hours)
-                            const candles = days === 22 ? aggregateCandles(cd.candles, 12) : cd.candles;
-                            renderPriceChart(chartFullData, days, candles);
-                            return;
-                        }
+            // All ranges fetch OHLC from the server
+            try {
+                const apiUrl = getApiUrl();
+                const resp = await fetch(`${apiUrl}/chart/${ticker}?range=${days}`, {
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                });
+                if (resp.ok) {
+                    const cd = await resp.json();
+                    if (cd.candles && cd.candles.length > 0) {
+                        // 1M: aggregate 30-min → 6hr
+                        const candles = days === 22 ? aggregateCandles(cd.candles, 12) : cd.candles;
+                        renderPriceChart(chartFullData, days, candles);
+                        return;
                     }
-                } catch (e) {
-                    console.warn('Chart fetch failed, falling back to daily:', e);
                 }
+            } catch (e) {
+                console.warn('Chart fetch failed, falling back:', e);
             }
-
             renderPriceChart(chartFullData, days);
         }
 
-        function renderPriceChart(data, rangeDays = 22, intradayCandles = null) {
+        function renderPriceChart(data, rangeDays = 22, externalCandles = null) {
             const ctx = document.getElementById(`priceChart_${data.ticker}`);
             if (!ctx) return;
 
-            // Store full data for range switching
             chartFullData = data;
 
-            // Destroy existing chart
             if (priceChartInstance) {
                 priceChartInstance.destroy();
+                priceChartInstance = null;
             }
 
-            // Use intraday/external candles if provided, else daily from price_history
-            let history, labels, prices, sma20, sma50, sma200;
-            // intradayCandles covers: 1W (30-min), 1M (6hr aggregated), 6M (daily from Schwab)
-            const isIntraday = !!intradayCandles && intradayCandles[0] && intradayCandles[0].date.includes(' ');
-            const hasExternalCandles = !!intradayCandles;
-
-            if (hasExternalCandles) {
-                history = intradayCandles;
-                if (isIntraday) {
-                    // Strip date prefix → show HH:MM for intraday/6hr candles
-                    labels = history.map(d => d.date.split(' ')[1]?.slice(0, 5) ?? d.date);
-                } else {
-                    // Daily Schwab candles (6M): show MM-DD
-                    labels = history.map(d => d.date.slice(5));
-                }
-                prices = history.map(d => d.close);
-                sma20  = new Array(history.length).fill(null);
-                sma50  = new Array(history.length).fill(null);
-                sma200 = new Array(history.length).fill(null);
+            // Determine data source
+            let history, hasSMA, isIntraday;
+            if (externalCandles && externalCandles.length > 0) {
+                history   = externalCandles;
+                hasSMA    = false;
+                isIntraday = history[0].date.includes(' ');
             } else {
-                const fullHistory = data.price_history;
-                history = fullHistory.slice(-rangeDays);
-                labels  = history.map(d => d.date);
-                prices  = history.map(d => d.close);
-                sma20   = history.map(d => d.sma20);
-                sma50   = history.map(d => d.sma50);
-                sma200  = history.map(d => d.sma200);
+                history   = data.price_history.slice(-rangeDays);
+                hasSMA    = true;
+                isIntraday = false;
             }
 
-            // No forward projection for intraday; for daily, cap at 1/5 of chart width
-            const projDays = isIntraday ? 0 : Math.max(1, Math.round(rangeDays / 4));
+            const prices = history.map(d => d.close);
 
-            const lastDate = new Date(history[history.length - 1].date);
-            const projectionDates = [];
-            for (let i = 1; i <= projDays; i++) {
-                const d = new Date(lastDate);
-                d.setDate(d.getDate() + i);
-                projectionDates.push(d.toISOString().slice(0, 10));
-            }
+            // Candlestick dataset: {x (ms), o, h, l, c}
+            const candleData = history.map(d => ({
+                x: toTs(d.date),
+                o: d.open  ?? d.close,
+                h: d.high  ?? d.close,
+                l: d.low   ?? d.close,
+                c: d.close,
+            }));
 
-            // Calculate projection zones
+            // Projection: 1/5 of chart width in bars, estimated by bar spacing
+            const projBarCount = Math.max(1, Math.round(history.length / 4));
+            const barMs = history.length >= 2
+                ? toTs(history[history.length - 1].date) - toTs(history[history.length - 2].date)
+                : 24 * 60 * 60 * 1000;
+
             const currentPrice = data.current_price;
-            const riskThreshold = currentPrice * 0.95;  // -5% threshold
+            const safeProb     = data.p_safe;
+            const expRet       = safeProb > 0.5 ? (safeProb - 0.5) * 0.04 : -(0.5 - safeProb) * 0.08;
+            const projectedPrice = currentPrice * (1 + expRet);
+            const lookback     = Math.min(20, prices.length);
+            const vol          = Math.abs(prices[prices.length - 1] - prices[prices.length - lookback]) / prices[prices.length - lookback];
+            const barVol       = vol / Math.sqrt(lookback) * 1.5;
+            const lastTs       = toTs(history[history.length - 1].date);
+            const projColor    = data.csp_score > 0 ? '#22c55e' : '#ef4444';
 
-            // Safe zone projection (based on model confidence)
-            const safeProb = data.p_safe;
-            const expectedReturn = safeProb > 0.5 ? (safeProb - 0.5) * 0.04 : -(0.5 - safeProb) * 0.08;
-            const projectedPrice = currentPrice * (1 + expectedReturn);
-
-            // Create projection bands
-            const lookback = Math.min(20, prices.length);
-            const volatility = Math.abs(prices[prices.length - 1] - prices[prices.length - lookback]) / prices[prices.length - lookback];
-            const dailyVol = volatility / Math.sqrt(lookback) * 1.5;
-
-            const allLabels = [...labels, ...projectionDates];
-            const pricesWithNull = [...prices, ...new Array(projDays).fill(null)];
-            const sma20WithNull = [...sma20, ...new Array(projDays).fill(null)];
-            const sma50WithNull = [...sma50, ...new Array(projDays).fill(null)];
-            const sma200WithNull = [...sma200, ...new Array(projDays).fill(null)];
-
-            // Projection line (center)
-            const projectionLine = [...new Array(prices.length).fill(null)];
-            for (let i = 0; i <= projDays; i++) {
-                const progress = i / projDays;
-                projectionLine.push(currentPrice + (projectedPrice - currentPrice) * progress);
+            const projLine = [{ x: lastTs, y: currentPrice }];
+            const upBand   = [{ x: lastTs, y: currentPrice }];
+            const loBand   = [{ x: lastTs, y: currentPrice }];
+            for (let i = 1; i <= projBarCount; i++) {
+                const progress = i / projBarCount;
+                const p  = currentPrice + (projectedPrice - currentPrice) * progress;
+                const ts = lastTs + barMs * i;
+                projLine.push({ x: ts, y: p });
+                upBand.push({ x: ts, y: p + currentPrice * barVol * Math.sqrt(i + 1) });
+                loBand.push({ x: ts, y: p - currentPrice * barVol * Math.sqrt(i + 1) });
             }
 
-            // Upper and lower bounds
-            const upperBound = projectionLine.map((p, i) => {
-                if (p === null) return null;
-                const daysOut = Math.max(0, i - prices.length);
-                return p + (currentPrice * dailyVol * Math.sqrt(daysOut + 1));
-            });
-            const lowerBound = projectionLine.map((p, i) => {
-                if (p === null) return null;
-                const daysOut = Math.max(0, i - prices.length);
-                return p - (currentPrice * dailyVol * Math.sqrt(daysOut + 1));
-            });
+            const riskThreshold = currentPrice * 0.95;
+            const riskLine = [
+                { x: lastTs, y: riskThreshold },
+                { x: lastTs + barMs * projBarCount, y: riskThreshold }
+            ];
 
-            // Risk threshold line
-            const riskLine = allLabels.map((_, i) => i >= prices.length - 1 ? riskThreshold : null);
+            // SMA lines as {x, y} — only available from price_history
+            const smaLine = (key) => hasSMA
+                ? history.map(d => ({ x: toTs(d.date), y: d[key] ?? null }))
+                : [];
 
-            // Custom tooltip element
             const tooltipEl = document.getElementById(`chartTooltip_${data.ticker}`);
 
             priceChartInstance = new Chart(ctx, {
-                type: 'line',
+                type: 'candlestick',
                 data: {
-                    labels: allLabels,
                     datasets: [
                         {
                             label: 'Price',
-                            data: pricesWithNull,
-                            borderColor: '#e6edf3',
-                            backgroundColor: 'transparent',
-                            borderWidth: 2,
-                            pointRadius: 0,
-                            tension: 0.1
+                            data: candleData,
+                            color: {
+                                up:        'rgba(34,197,94,0.85)',
+                                down:      'rgba(239,68,68,0.85)',
+                                unchanged: 'rgba(139,148,158,0.7)',
+                            },
+                            borderColor: {
+                                up:        '#22c55e',
+                                down:      '#ef4444',
+                                unchanged: '#8b949e',
+                            },
                         },
-                        {
-                            label: 'SMA 20',
-                            data: sma20WithNull,
-                            borderColor: '#58a6ff',
-                            backgroundColor: 'transparent',
-                            borderWidth: 1.5,
-                            pointRadius: 0,
-                            borderDash: [3, 3]
-                        },
-                        {
-                            label: 'SMA 50',
-                            data: sma50WithNull,
-                            borderColor: '#d29922',
-                            backgroundColor: 'transparent',
-                            borderWidth: 1.5,
-                            pointRadius: 0,
-                            borderDash: [3, 3]
-                        },
-                        {
-                            label: 'SMA 200',
-                            data: sma200WithNull,
-                            borderColor: '#a371f7',
-                            backgroundColor: 'transparent',
-                            borderWidth: 1.5,
-                            pointRadius: 0,
-                            borderDash: [5, 3]
-                        },
-                        {
-                            label: 'Projection',
-                            data: projectionLine,
-                            borderColor: data.csp_score > 0 ? '#3fb950' : '#f85149',
-                            backgroundColor: 'transparent',
-                            borderWidth: 2,
-                            pointRadius: 0,
-                            borderDash: [5, 5]
-                        },
-                        {
-                            label: 'Upper Band',
-                            data: upperBound,
-                            borderColor: 'rgba(63, 185, 80, 0.3)',
-                            backgroundColor: 'rgba(63, 185, 80, 0.1)',
-                            fill: '+1',
-                            borderWidth: 1,
-                            pointRadius: 0
-                        },
-                        {
-                            label: 'Lower Band',
-                            data: lowerBound,
-                            borderColor: 'rgba(248, 81, 73, 0.3)',
-                            backgroundColor: 'transparent',
-                            borderWidth: 1,
-                            pointRadius: 0
-                        },
-                        {
-                            label: '-5% Risk',
-                            data: riskLine,
-                            borderColor: '#f85149',
-                            backgroundColor: 'rgba(248, 81, 73, 0.1)',
-                            borderWidth: 2,
-                            pointRadius: 0,
-                            borderDash: [10, 5],
-                            fill: 'origin'
-                        }
+                        ...(hasSMA ? [
+                            { type:'line', label:'SMA 20',  data: smaLine('sma20'),  borderColor:'#58a6ff', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[4,3] },
+                            { type:'line', label:'SMA 50',  data: smaLine('sma50'),  borderColor:'#d29922', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[4,3] },
+                            { type:'line', label:'SMA 200', data: smaLine('sma200'), borderColor:'#a371f7', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[6,3] },
+                        ] : []),
+                        { type:'line', label:'Projection', data: projLine, borderColor: projColor, backgroundColor:'transparent', borderWidth:2, pointRadius:0, borderDash:[6,4] },
+                        { type:'line', label:'Upper Band', data: upBand,   borderColor:'rgba(34,197,94,0.25)',  backgroundColor:'rgba(34,197,94,0.07)',  fill:'+1', borderWidth:1, pointRadius:0 },
+                        { type:'line', label:'Lower Band', data: loBand,   borderColor:'rgba(239,68,68,0.2)',   backgroundColor:'transparent', borderWidth:1, pointRadius:0 },
+                        { type:'line', label:'-5% Risk',   data: riskLine, borderColor:'rgba(239,68,68,0.65)', backgroundColor:'rgba(239,68,68,0.06)', borderWidth:1.5, pointRadius:0, borderDash:[8,4], fill:'origin' },
                     ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    interaction: {
-                        mode: 'index',
-                        intersect: false
-                    },
+                    animation: { duration: 200 },
+                    interaction: { mode: 'index', intersect: false },
                     plugins: {
-                        legend: {
-                            display: false
-                        },
+                        legend: { display: false },
                         tooltip: {
-                            enabled: false,  // Disable default tooltip
+                            enabled: false,
                             external: function(context) {
                                 if (!tooltipEl) return;
-
-                                const tooltipModel = context.tooltip;
-
-                                // Hide if no tooltip
-                                if (tooltipModel.opacity === 0) {
-                                    tooltipEl.style.opacity = 0;
-                                    return;
-                                }
-
-                                // Build tooltip content
-                                if (tooltipModel.body) {
-                                    const titleLines = tooltipModel.title || [];
-                                    const bodyLines = tooltipModel.body.map(b => b.lines);
-
-                                    let html = `<div style="color: #e6edf3; font-weight: 600; margin-bottom: 5px;">${titleLines[0] || ''}</div>`;
-
-                                    bodyLines.forEach((body, i) => {
-                                        const line = body[0];
-                                        if (line && !line.includes('null')) {
-                                            const colors = ['#e6edf3', '#58a6ff', '#d29922', '#a371f7', data.csp_score > 0 ? '#3fb950' : '#f85149', 'rgba(63, 185, 80, 0.8)', 'rgba(248, 81, 73, 0.8)', '#f85149'];
-                                            const color = colors[i] || '#8b949e';
-                                            html += `<div style="color: ${color};">${line}</div>`;
+                                const tm = context.tooltip;
+                                if (tm.opacity === 0) { tooltipEl.style.opacity = '0'; return; }
+                                if (tm.dataPoints && tm.dataPoints.length) {
+                                    const dp = tm.dataPoints[0];
+                                    const raw = dp.raw;
+                                    let html = `<div style="font-weight:700;color:var(--text-primary);margin-bottom:5px;font-size:0.8rem;">${tm.title?.[0] ?? ''}</div>`;
+                                    if (raw && raw.o !== undefined) {
+                                        const col = raw.c >= raw.o ? '#22c55e' : '#ef4444';
+                                        html += `<div style="color:${col};font-size:0.78rem;">O: $${raw.o.toFixed(2)} H: $${raw.h.toFixed(2)}</div>`;
+                                        html += `<div style="color:${col};font-size:0.78rem;">L: $${raw.l.toFixed(2)} C: $${raw.c.toFixed(2)}</div>`;
+                                    }
+                                    tm.dataPoints.slice(1).forEach(p => {
+                                        if (p.parsed?.y != null) {
+                                            html += `<div style="color:${p.dataset.borderColor};font-size:0.78rem;">${p.dataset.label}: $${p.parsed.y.toFixed(2)}</div>`;
                                         }
                                     });
-
                                     tooltipEl.innerHTML = html;
                                 }
-
-                                tooltipEl.style.opacity = 1;
+                                tooltipEl.style.opacity = '1';
                             }
                         }
                     },
                     scales: {
                         x: {
-                            grid: {
-                                color: '#21262d',
-                                drawBorder: false
+                            type: 'timeseries',
+                            time: {
+                                displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'MMM yy' }
                             },
-                            ticks: {
-                                color: '#8b949e',
-                                maxTicksLimit: isIntraday ? 8 : 10,
-                                callback: function(val, index) {
-                                    const label = this.getLabelForValue(val);
-                                    if (isIntraday) return label; // already HH:MM
-                                    // Daily external candles: labels are already MM-DD
-                                    if (hasExternalCandles) return label;
-                                    if (index === prices.length - 1) return 'Today';
-                                    return label.slice(5);  // Show MM-DD
-                                }
-                            }
+                            grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
+                            ticks: { color:'var(--text-secondary)', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 }
                         },
                         y: {
-                            grid: {
-                                color: '#21262d',
-                                drawBorder: false
-                            },
+                            position: 'right',
+                            grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
                             ticks: {
-                                color: '#8b949e',
-                                callback: function(val) {
-                                    return '$' + val.toFixed(0);
-                                }
+                                color: 'var(--text-secondary)',
+                                callback: v => '$' + v.toFixed(v >= 100 ? 0 : 2)
                             }
                         }
                     }
