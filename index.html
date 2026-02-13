@@ -1135,11 +1135,10 @@
 
                             <!-- Expiration Toggle Buttons -->
                             <div style="display: flex; gap: 8px; margin-bottom: 15px; overflow-x: auto; padding-bottom: 5px;" id="expirationToggle_${data.ticker}">
-                                ${data.available_expirations.map((exp, idx) => {
+                                ${data.available_expirations.slice(0, 4).map((exp, idx) => {
                                     const expData = data.options_by_expiration[exp];
                                     const expDate = new Date(exp + 'T00:00:00');
                                     const monthName = expDate.toLocaleString('default', { month: 'short' });
-                                    const day = expDate.getDate();
                                     const year = expDate.getFullYear().toString().slice(-2);
                                     return `
                                         <button onclick="switchExpiration('${data.ticker}', '${exp}')"
@@ -1150,15 +1149,15 @@
                                                        color: var(${idx === 0 ? '--text-primary' : '--text-secondary'});
                                                        cursor: pointer; font-weight: 500; transition: all 0.2s;
                                                        border-bottom: ${idx === 0 ? '3px solid var(--accent-purple)' : '3px solid transparent'};">
-                                            <div style="font-size: 0.85rem; white-space: nowrap;">${monthName}-${day}-${year}</div>
-                                            <div style="font-size: 0.75rem; opacity: 0.7;">${expData.dte} Days</div>
+                                            <div style="font-size: 0.85rem; white-space: nowrap;">${monthName} ${year}</div>
+                                            <div style="font-size: 0.75rem; opacity: 0.7;">${expData.dte}d</div>
                                         </button>
                                     `;
                                 }).join('')}
                             </div>
 
                             <!-- Options Tables for Each Expiration -->
-                            ${data.available_expirations.map((exp, idx) => {
+                            ${data.available_expirations.slice(0, 4).map((exp, idx) => {
                                 const expData = data.options_by_expiration[exp];
                                 return `
                                 <div id="optionsTable_${data.ticker}_${exp.replace(/-/g, '')}"
