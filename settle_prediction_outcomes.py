@@ -11,6 +11,7 @@ Uses Schwab API when available (preferred), falls back to Yahoo Finance.
 
 import argparse
 import json
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,8 @@ except ImportError:
     SCHWAB_AVAILABLE = False
 
 import yfinance as yf
+
+CONTRACT_FORWARD_DAYS_DEFAULT = 35
 
 
 def parse_args():
@@ -78,13 +81,23 @@ def fetch_close_series_yahoo(ticker: str, period: str) -> pd.Series | None:
         return None
 
 
-def fetch_close_series(ticker: str, period: str, use_schwab: bool = True) -> pd.Series | None:
-    """Fetch close prices, preferring Schwab API with Yahoo fallback."""
+def fetch_close_series(
+    ticker: str,
+    period: str,
+    use_schwab: bool = True,
+    allow_yahoo_fallback: bool = True,
+) -> pd.Series | None:
+    """Fetch close prices, preferring Schwab API with optional Yahoo fallback."""
     if use_schwab and SCHWAB_AVAILABLE:
         series = fetch_close_series_schwab(ticker)
         if series is not None and len(series) > 0:
             return series
+        if not allow_yahoo_fallback:
+            print(f"  Schwab returned no data for {ticker}; Yahoo fallback disabled")
+            return None
         print(f"  Schwab returned no data for {ticker}, falling back to Yahoo")
+    if not allow_yahoo_fallback:
+        return None
     return fetch_close_series_yahoo(ticker, period)
 
 
@@ -101,12 +114,50 @@ def settle_prediction(pred: dict, close_series: pd.Series, forward_days: int, dr
     except Exception:
         return None
 
+    # Determine settlement horizon in trading bars.
+    # Contract-mode predictions should use the same fixed horizon as training labels
+    # (default 35 bars), not expiration-derived windows.
+    effective_forward_days = forward_days
+    explicit_horizon = False
+
+    logged_horizon = pred.get("label_forward_days")
+    if logged_horizon is not None:
+        try:
+            h = int(logged_horizon)
+            if 5 <= h <= 180:
+                effective_forward_days = h
+                explicit_horizon = True
+        except Exception:
+            pass
+
+    model_version = str(pred.get("model_version", "")).lower()
+    is_contract_prediction = (
+        model_version.startswith("contract_")
+        or pred.get("model_p_breach") is not None
+    )
+    if is_contract_prediction and not explicit_horizon:
+        # Keep contract settlement fixed to the label horizon.
+        effective_forward_days = CONTRACT_FORWARD_DAYS_DEFAULT
+
+    # Legacy behavior: infer horizon from suggested expiration when available.
+    if not is_contract_prediction and not explicit_horizon:
+        logged_exp = pred.get("suggested_expiration")
+        if logged_exp:
+            try:
+                exp_dt = pd.Timestamp(logged_exp).normalize()
+                delta_days = (exp_dt - pred_dt).days
+                if 7 <= delta_days <= 120:  # sanity bounds
+                    # Convert calendar days to approximate trading bars (~252/365 ratio)
+                    effective_forward_days = max(5, int(delta_days * 252 / 365))
+            except Exception:
+                pass
+
     # Use first trading bar on/after prediction date.
     pos_candidates = np.where(close_series.index >= pred_dt)[0]
     if len(pos_candidates) == 0:
         return None
     start_pos = int(pos_candidates[0])
-    end_pos = start_pos + forward_days
+    end_pos = start_pos + effective_forward_days
     if end_pos >= len(close_series):
         return None  # not matured yet
 
@@ -115,8 +166,18 @@ def settle_prediction(pred: dict, close_series: pd.Series, forward_days: int, dr
     min_price = float(window.min())
     end_price = float(window.iloc[-1])
 
-    max_drawdown = (min_price - entry) / entry
-    outcome = 1 if max_drawdown > -drop_threshold else 0
+    # Contract-aware settlement: if the prediction logged a specific strike,
+    # use it directly instead of the flat drop_threshold.
+    suggested_strike = pred.get("suggested_strike")
+    if suggested_strike is not None and float(suggested_strike) > 0:
+        strike = float(suggested_strike)
+        # outcome = 1 means profitable (not breached), 0 means assigned
+        outcome = 1 if min_price >= strike else 0
+    else:
+        # Legacy: flat drop threshold
+        max_drawdown = (min_price - entry) / entry
+        outcome = 1 if max_drawdown > -drop_threshold else 0
+
     actual_return = (end_price - entry) / entry
     return outcome, actual_return
 
@@ -132,8 +193,19 @@ def main():
     if not predictions:
         raise SystemExit("No predictions found in log.")
 
+    # Default behavior is Schwab-only unless explicitly overridden.
+    schwab_only = os.getenv("SCHWAB_ONLY", "1") == "1"
+    if schwab_only and args.force_yahoo:
+        raise SystemExit("SCHWAB_ONLY=1 is set; --force-yahoo is disabled.")
+
     use_schwab = not args.force_yahoo
-    source = "Schwab API (Yahoo fallback)" if (use_schwab and SCHWAB_AVAILABLE) else "Yahoo Finance"
+    allow_yahoo_fallback = not schwab_only
+    if use_schwab and SCHWAB_AVAILABLE and allow_yahoo_fallback:
+        source = "Schwab API (Yahoo fallback)"
+    elif use_schwab and SCHWAB_AVAILABLE:
+        source = "Schwab API (fallback disabled)"
+    else:
+        source = "Yahoo Finance"
     print(f"Data source: {source}")
 
     by_ticker = {}
@@ -145,7 +217,12 @@ def main():
     series_cache = {}
     for ticker in sorted(by_ticker.keys()):
         print(f"  Fetching {ticker}...", end=" ", flush=True)
-        series_cache[ticker] = fetch_close_series(ticker, args.period, use_schwab=use_schwab)
+        series_cache[ticker] = fetch_close_series(
+            ticker,
+            args.period,
+            use_schwab=use_schwab,
+            allow_yahoo_fallback=allow_yahoo_fallback,
+        )
         n = len(series_cache[ticker]) if series_cache[ticker] is not None else 0
         print(f"{n} bars")
 

@@ -12,6 +12,7 @@ from urllib.parse import urlencode, urlparse, parse_qs
 import os
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'schwab_config.json')
+REQUEST_TIMEOUT_SECONDS = 20
 
 
 def load_config():
@@ -69,7 +70,12 @@ def exchange_code_for_tokens(auth_code):
         'redirect_uri': config['redirect_uri']
     }
 
-    response = requests.post(config['token_url'], headers=headers, data=data)
+    response = requests.post(
+        config['token_url'],
+        headers=headers,
+        data=data,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
 
     if response.status_code != 200:
         raise Exception(f"Token exchange failed: {response.status_code} - {response.text}")
@@ -111,7 +117,12 @@ def refresh_access_token():
         'refresh_token': config['refresh_token']
     }
 
-    response = requests.post(config['token_url'], headers=headers, data=data)
+    response = requests.post(
+        config['token_url'],
+        headers=headers,
+        data=data,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
 
     if response.status_code != 200:
         raise Exception(f"Token refresh failed: {response.status_code} - {response.text}")

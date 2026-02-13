@@ -1163,50 +1163,70 @@
                                 <div id="optionsTable_${data.ticker}_${exp.replace(/-/g, '')}"
                                      style="display: ${idx === 0 ? 'block' : 'none'};">
                                     <div style="overflow-x: auto;">
-                                        <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                                        <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed;">
+                                            <colgroup>
+                                                <col style="width: 7%">  <!-- Strike -->
+                                                <col style="width: 6%">  <!-- Bid -->
+                                                <col style="width: 6%">  <!-- Ask -->
+                                                <col style="width: 6%">  <!-- Low -->
+                                                <col style="width: 6%">  <!-- High -->
+                                                <col style="width: 6%">  <!-- Vol -->
+                                                <col style="width: 6%">  <!-- Delta -->
+                                                <col style="width: 6%">  <!-- Model -->
+                                                <col style="width: 6%">  <!-- Edge -->
+                                                <col style="width: 6%">  <!-- ROR -->
+                                                <col style="width: 6%">  <!-- EV -->
+                                                <col style="width: 6%">  <!-- θ Eff -->
+                                                <col style="width: 6%">  <!-- Theta -->
+                                                <col style="width: 6%">  <!-- Vega -->
+                                                <col style="width: 6%">  <!-- Gamma -->
+                                                <col style="width: 5%">  <!-- IV -->
+                                            </colgroup>
                                             <thead>
                                                 <tr style="background: var(--bg-row-alt);">
-                                                    <th style="padding: 6px 8px; text-align: left; color: var(--text-secondary);">Strike</th>
+                                                    <th style="padding: 6px 8px; text-align: left; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Strike</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Bid</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Ask</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Low</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">High</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Vol</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Delta</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Model</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Edge</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">ROR</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">EV</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">θ Eff</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Theta</th>
-                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Vol</th>
-                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Gamma</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Vega</th>
-                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Last</th>
-                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Mid</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Gamma</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">IV</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 ${data.options_data && data.options_data.edge > 0 && data.options_data.expiration === exp ? `
                                                 <tr style="background: rgba(128,90,213,0.08); border-bottom: 1px solid #30363d;">
-                                                    <td colspan="15" style="padding: 4px 8px; font-size: 0.72rem; color: var(--accent-purple); font-weight: 600; letter-spacing: 0.05em;">⭐ SUGGESTED TRADE</td>
+                                                    <td colspan="16" style="padding: 4px 8px; font-size: 0.72rem; color: var(--accent-purple); font-weight: 600; letter-spacing: 0.05em;">⭐ SUGGESTED TRADE</td>
                                                 </tr>
                                                 <tr style="border-bottom: 2px solid var(--accent-purple); background: rgba(128,90,213,0.25); border-left: 3px solid var(--accent-purple);">
-                                                    <td style="padding:6px 8px;color:var(--text-strike);"><strong>$${data.options_data.strike.toFixed(2)}</strong></td>
+                                                    <td style="padding:6px 8px;color:var(--text-strike);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><strong>$${data.options_data.strike.toFixed(2)}</strong></td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.bid.toFixed(2)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ask.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.low ?? 0).toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.high ?? 0).toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.volume.toLocaleString()}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.delta.toFixed(2)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:var(--accent-blue);">${data.options_data.model_prob_assignment.toFixed(2)}</td>
                                                     <td style="padding:6px 8px;text-align:right;font-weight:bold;color:var(--positive-green);">+${data.options_data.edge.toFixed(1)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ror.toFixed(1)}%</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ev_per_share != null ? '$' + data.options_data.ev_per_share.toFixed(2) : '-'}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta_efficiency ? data.options_data.theta_efficiency.toFixed(3) : '-'}%</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta.toFixed(2)}</td>
-                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.volume.toLocaleString()}</td>
-                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.gamma.toFixed(3)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.vega.toFixed(2)}</td>
-                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.last.toFixed(2)}</td>
-                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.premium.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.gamma.toFixed(3)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.implied_volatility * 100).toFixed(0)}%</td>
                                                 </tr>
                                                 <tr style="background: rgba(128,90,213,0.04); border-bottom: 1px solid #30363d;">
-                                                    <td colspan="15" style="padding: 3px 8px; font-size: 0.72rem; color: #718096; letter-spacing: 0.04em;">ALL STRIKES</td>
+                                                    <td colspan="16" style="padding: 3px 8px; font-size: 0.72rem; color: #718096; letter-spacing: 0.04em;">ALL STRIKES</td>
                                                 </tr>
                                                 ` : ''}
                                                 ${expData.options.map((opt, rowIdx) => {
@@ -1214,20 +1234,21 @@
                                                     const rowBg = opt.is_suggested ? 'rgba(128, 90, 213, 0.25)' : isITM ? 'var(--bg-row-itm)' : 'var(--bg-row-otm)';
                                                     return `
                                                     <tr style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
-                                                        <td style="padding: 6px 8px; color: var(--text-strike);"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
+                                                        <td style="padding: 6px 8px; color: var(--text-strike); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.bid.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ask.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${(opt.low ?? 0).toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${(opt.high ?? 0).toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.volume.toLocaleString()}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.delta.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment != null ? opt.model_prob_assignment.toFixed(2) : '-'}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge != null ? opt.edge.toFixed(1) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ror.toFixed(1)}%</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ev_per_share != null ? '$' + opt.ev_per_share.toFixed(2) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta_efficiency ? opt.theta_efficiency.toFixed(3) : '-'}%</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.volume.toLocaleString()}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.gamma.toFixed(3)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.vega.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.last.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.premium.toFixed(2)}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.gamma.toFixed(3)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${(opt.implied_volatility * 100).toFixed(0)}%</td>
                                                     </tr>
                                                 `}).join('')}
@@ -1683,37 +1704,34 @@
         function displayMultiResults(results) {
             const resultDiv = document.getElementById('multiResults');
 
-            // Process each ticker's data
+            // Process each ticker's data — use server-computed options_data (same logic as suggested trade)
             const tickerData = results.map(data => {
                 if (data.error) {
                     return { ticker: data.ticker, error: data.error };
                 }
 
-                // Find options in 0.20-0.30 delta range from first expiration
-                let bestOption = null;
-                if (data.options_by_expiration && data.available_expirations && data.available_expirations.length > 0) {
-                    const firstExp = data.available_expirations[0];
-                    const options = data.options_by_expiration[firstExp]?.options || [];
-                    bestOption = options.reduce((best, opt) => {
-                        const delta = Math.abs(opt.delta);
-                        if (delta >= 0.20 && delta <= 0.40) {
-                            if (!best || Math.abs(delta - 0.25) < Math.abs(Math.abs(best.delta) - 0.25)) {
-                                return opt;
-                            }
-                        }
-                        return best;
-                    }, null);
-                }
+                // Use the server's suggested trade (options_data) — same ev_candidates logic:
+                // risk_adjusted_ev > 0, edge_prob >= MIN_EDGE_PROB, delta <= 0.40, DTE 20-50
+                // ranked by risk_adjusted_ev × edge_prob
+                const opt = (data.options_data && data.options_data.edge > 0) ? data.options_data : null;
 
-                const isGood = data.csp_score > 0 && bestOption && bestOption.edge > 0;
                 return {
                     ticker: data.ticker,
                     price: data.current_price,
-                    ror: bestOption?.ror,
-                    thetaEff: bestOption?.theta_efficiency,
-                    prediction: isGood ? 'GOOD' : 'WAIT'
+                    cspScore: data.csp_score,
+                    opt,
+                    hasGoodTrade: !!opt
                 };
             });
+
+            // Sort: tickers with a good trade first, then by score
+            tickerData.sort((a, b) => {
+                if (a.hasGoodTrade !== b.hasGoodTrade) return b.hasGoodTrade - a.hasGoodTrade;
+                return (b.cspScore || 0) - (a.cspScore || 0);
+            });
+
+            const fmt = (v, digits=2, suffix='') => v != null ? v.toFixed(digits) + suffix : '-';
+            const fmtD = v => v != null ? v.toFixed(3) : '-';
 
             // Build transposed table (metrics as rows, tickers as columns)
             const html = `
@@ -1721,44 +1739,93 @@
                     <table style="border-collapse: collapse; font-size: 0.9rem;">
                         <thead>
                             <tr style="background: var(--bg-row-alt);">
-                                <th style="padding: 10px 15px; text-align: left; color: var(--text-secondary); min-width: 80px;"></th>
+                                <th style="padding: 10px 15px; text-align: left; color: var(--text-secondary); min-width: 90px;"></th>
                                 ${tickerData.map(d => `
-                                    <th style="padding: 10px 15px; text-align: center; color: var(--text-strike); min-width: 80px;">
+                                    <th style="padding: 10px 15px; text-align: center; color: var(--text-strike); min-width: 90px;">
                                         <strong>${d.ticker}</strong>
+                                        ${d.hasGoodTrade ? '<br><span style="font-size:0.7rem;color:var(--positive-green);">⭐ TRADE</span>' : '<br><span style="font-size:0.7rem;color:var(--text-secondary);">WAIT</span>'}
                                     </th>
                                 `).join('')}
                             </tr>
                         </thead>
                         <tbody>
                             <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-otm);">
-                                <td style="padding: 10px 15px; color: var(--text-secondary);">Price</td>
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">Price</td>
                                 ${tickerData.map(d => `
-                                    <td style="padding: 10px 15px; text-align: center; color: #C0C0C0;">
+                                    <td style="padding: 8px 15px; text-align: center; color: #C0C0C0;">
                                         ${d.error ? '-' : '$' + d.price.toFixed(2)}
                                     </td>
                                 `).join('')}
                             </tr>
                             <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-itm);">
-                                <td style="padding: 10px 15px; color: var(--text-secondary);">ROR</td>
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">Strike</td>
                                 ${tickerData.map(d => `
-                                    <td style="padding: 10px 15px; text-align: center; color: var(--positive-green);">
-                                        ${d.error || !d.ror ? '-' : d.ror.toFixed(2) + '%'}
+                                    <td style="padding: 8px 15px; text-align: center; color: var(--text-strike);">
+                                        ${d.opt ? '$' + d.opt.strike.toFixed(0) : '-'}
                                     </td>
                                 `).join('')}
                             </tr>
                             <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-otm);">
-                                <td style="padding: 10px 15px; color: var(--text-secondary);">θ Eff</td>
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">Exp / DTE</td>
                                 ${tickerData.map(d => `
-                                    <td style="padding: 10px 15px; text-align: center; color: #C0C0C0;">
-                                        ${d.error || !d.thetaEff ? '-' : d.thetaEff.toFixed(3) + '%'}
+                                    <td style="padding: 8px 15px; text-align: center; color: #C0C0C0; font-size:0.8rem;">
+                                        ${d.opt ? d.opt.expiration + '<br>' + d.opt.dte + 'd' : '-'}
+                                    </td>
+                                `).join('')}
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-itm);">
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">Delta</td>
+                                ${tickerData.map(d => `
+                                    <td style="padding: 8px 15px; text-align: center; color: #C0C0C0;">
+                                        ${d.opt ? fmtD(d.opt.delta) : '-'}
+                                    </td>
+                                `).join('')}
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-otm);">
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">Premium</td>
+                                ${tickerData.map(d => `
+                                    <td style="padding: 8px 15px; text-align: center; color: var(--positive-green);">
+                                        ${d.opt ? '$' + fmt(d.opt.premium) : '-'}
+                                    </td>
+                                `).join('')}
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-itm);">
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">ROR</td>
+                                ${tickerData.map(d => `
+                                    <td style="padding: 8px 15px; text-align: center; color: var(--positive-green);">
+                                        ${d.opt ? fmt(d.opt.ror) + '%' : '-'}
+                                    </td>
+                                `).join('')}
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-otm);">
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">EV</td>
+                                ${tickerData.map(d => `
+                                    <td style="padding: 8px 15px; text-align: center; color: ${d.opt && d.opt.ev_per_share > 0 ? 'var(--positive-green)' : 'var(--negative-red)'};">
+                                        ${d.opt && d.opt.ev_per_share != null ? '$' + d.opt.ev_per_share.toFixed(2) : '-'}
+                                    </td>
+                                `).join('')}
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-itm);">
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">Edge</td>
+                                ${tickerData.map(d => `
+                                    <td style="padding: 8px 15px; text-align: center; color: ${d.opt && d.opt.edge > 0 ? 'var(--positive-green)' : 'var(--negative-red)'};">
+                                        ${d.opt ? fmt(d.opt.edge) + '%' : '-'}
+                                    </td>
+                                `).join('')}
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-row-otm);">
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">Model</td>
+                                ${tickerData.map(d => `
+                                    <td style="padding: 8px 15px; text-align: center; color: #C0C0C0;">
+                                        ${d.opt ? fmt(d.opt.model_prob_assignment * 100) + '%' : d.error ? '-' : fmt(d.cspScore)}
                                     </td>
                                 `).join('')}
                             </tr>
                             <tr style="background: var(--bg-row-itm);">
-                                <td style="padding: 10px 15px; color: var(--text-secondary);">CSP</td>
+                                <td style="padding: 8px 15px; color: var(--text-secondary);">θ Eff</td>
                                 ${tickerData.map(d => `
-                                    <td style="padding: 10px 15px; text-align: center; font-weight: bold; color: var(${d.error ? '--text-secondary' : d.prediction === 'GOOD' ? '--positive-green' : '--negative-red'});">
-                                        ${d.error ? '-' : d.prediction}
+                                    <td style="padding: 8px 15px; text-align: center; color: #C0C0C0;">
+                                        ${d.opt ? fmt(d.opt.theta_efficiency, 3) + '%' : '-'}
                                     </td>
                                 `).join('')}
                             </tr>
@@ -1766,7 +1833,7 @@
                     </table>
                 </div>
                 <div style="margin-top: 10px; font-size: 0.75rem; color: var(--text-secondary);">
-                    <em>Based on 0.25 delta strike from nearest monthly expiration</em>
+                    <em>⭐ TRADE = positive-EV contract with edge ≥ 1pp, delta ≤ 0.40, DTE 20–50</em>
                 </div>
             `;
 
@@ -1810,14 +1877,14 @@
                     const safe = (i, v) => { if (cells[i]) cells[i].textContent = v; };
                     safe(1, opt.bid.toFixed(2));
                     safe(2, opt.ask.toFixed(2));
-                    safe(3, opt.delta.toFixed(3));
-                    safe(8, opt.theta.toFixed(4));
-                    safe(9, (opt.volume || 0).toLocaleString());
-                    safe(10, opt.gamma.toFixed(5));
-                    safe(11, opt.vega.toFixed(4));
-                    safe(12, opt.last.toFixed(2));
-                    safe(13, ((opt.bid + opt.ask) / 2).toFixed(2));
-                    safe(14, (opt.implied_volatility * 100).toFixed(1) + '%');
+                    safe(3, (opt.low ?? 0).toFixed(2));
+                    safe(4, (opt.high ?? 0).toFixed(2));
+                    safe(5, (opt.volume || 0).toLocaleString());
+                    safe(6, opt.delta.toFixed(3));
+                    safe(12, opt.theta.toFixed(4));
+                    safe(13, opt.vega.toFixed(4));
+                    safe(14, opt.gamma.toFixed(5));
+                    safe(15, (opt.implied_volatility * 100).toFixed(1) + '%');
                 });
                 return;
             }

@@ -16,7 +16,19 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, log_loss
 
 
-def _load_samples(log_path: str):
+def _load_samples(log_path: str, breach_mode: bool = False):
+    """Load settled predictions.
+
+    Args:
+        log_path: Path to predictions_log.json.
+        breach_mode: If True, load model_p_breach and flip outcome polarity
+            (outcome=0 means breached in settlement, but breach target=1 in
+            the contract model).  Falls back to p_safe mode if no breach
+            predictions are present.
+
+    Returns:
+        (probs, y) arrays sorted chronologically.
+    """
     with open(log_path, "r") as f:
         data = json.load(f)
 
@@ -24,12 +36,24 @@ def _load_samples(log_path: str):
     rows = []
     for p in preds:
         outcome = p.get("outcome")
-        p_safe = p.get("p_safe")
         ts = p.get("timestamp")
-        if outcome is None or p_safe is None or ts is None:
+        if outcome is None or ts is None:
             continue
+
+        if breach_mode and p.get("model_p_breach") is not None:
+            prob = float(p["model_p_breach"])
+            # Flip outcome: settlement outcome=1 means profitable (not breached),
+            # but the contract model predicts P(breach) where breach=1 is bad.
+            target = 1 - int(outcome)
+        else:
+            p_safe = p.get("p_safe")
+            if p_safe is None:
+                continue
+            prob = float(p_safe)
+            target = int(outcome)
+
         try:
-            rows.append((datetime.fromisoformat(ts), float(p_safe), int(outcome)))
+            rows.append((datetime.fromisoformat(ts), prob, target))
         except Exception:
             continue
 
@@ -60,9 +84,16 @@ def main():
     parser.add_argument("--output", default="timing_probability_calibrator.pkl", help="Output calibrator file")
     parser.add_argument("--min-samples", type=int, default=100, help="Minimum settled predictions required")
     parser.add_argument("--train-frac", type=float, default=0.8, help="Chronological train fraction")
+    parser.add_argument("--breach-mode", action="store_true", default=False,
+                        help="Calibrate P(breach) from contract model predictions (vs default P(safe))")
     args = parser.parse_args()
 
-    probs, y = _load_samples(args.log)
+    if args.breach_mode:
+        print("Mode: calibrating P(breach) from contract model predictions")
+        if args.output == "timing_probability_calibrator.pkl":
+            args.output = "contract_probability_calibrator.pkl"
+
+    probs, y = _load_samples(args.log, breach_mode=args.breach_mode)
     n = len(y)
     if n < args.min_samples:
         raise SystemExit(

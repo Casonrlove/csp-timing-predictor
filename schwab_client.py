@@ -367,6 +367,8 @@ def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.60, month
 
                 ask = opt.get('ask', 0)
                 last = opt.get('last', 0)
+                high = opt.get('highPrice', 0)
+                low = opt.get('lowPrice', 0)
                 volume = opt.get('totalVolume', 0)
                 open_interest = opt.get('openInterest', 0)
 
@@ -386,6 +388,8 @@ def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.60, month
                     'bid': round(bid, 2),
                     'ask': round(ask, 2),
                     'last': round(last, 2),
+                    'high': round(high, 2),
+                    'low': round(low, 2),
                     'delta': round(delta, 4),
                     'gamma': round(gamma, 5),
                     'theta': round(theta, 4),

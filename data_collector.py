@@ -7,6 +7,8 @@ Uses Schwab API for accurate market data
 import yfinance as yf  # Fallback and for earnings dates
 import pandas as pd
 import numpy as np
+import os
+from scipy.stats import norm
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import MACD, ADXIndicator, SMAIndicator, EMAIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
@@ -45,6 +47,9 @@ class CSPDataCollector:
         self.ticker = ticker
         self.period = period
         self.data = None
+        # Default to Schwab-only data to prevent accidental Yahoo mixing.
+        # Set SCHWAB_ONLY=0 only when explicitly testing fallback behavior.
+        self.schwab_only = os.getenv("SCHWAB_ONLY", "1") == "1"
 
     def _parse_period(self, period):
         """Convert period string to Schwab API parameters"""
@@ -97,6 +102,8 @@ class CSPDataCollector:
 
     def _fetch_reference_series(self, symbol: str, column: str = 'Close') -> pd.Series | None:
         """Return a tz-naive daily Close series for ``symbol`` over self.period."""
+        if self.schwab_only:
+            return None
         cache_key = (symbol, self.period)
         if cache_key not in CSPDataCollector._sector_cache:
             try:
@@ -118,8 +125,11 @@ class CSPDataCollector:
         return CSPDataCollector._sector_cache[cache_key]
 
     def fetch_data(self):
-        """Fetch historical stock data from Schwab API (with Yahoo fallback)"""
+        """Fetch historical stock data from Schwab API (Yahoo fallback optional)."""
         print(f"Fetching data for {self.ticker}...")
+
+        if self.schwab_only and not SCHWAB_AVAILABLE:
+            raise RuntimeError("SCHWAB_ONLY=1 but Schwab client is unavailable")
 
         data_source = "Yahoo"
 
@@ -151,28 +161,34 @@ class CSPDataCollector:
                 print("[Schwab] Falling back to Yahoo Finance")
                 self.data = None
 
-        # Fallback to Yahoo Finance
-        if self.data is None:
+        # Fallback to Yahoo Finance (disabled in SCHWAB_ONLY mode)
+        if self.data is None and not self.schwab_only:
             stock = yf.Ticker(self.ticker)
             self.data = stock.history(period=self.period)
             data_source = "Yahoo"
             print(f"[Yahoo] Loaded {len(self.data)} days of price history")
+        elif self.data is None and self.schwab_only:
+            raise RuntimeError(f"[Schwab] No price data for {self.ticker} in SCHWAB_ONLY mode")
 
         # Get earnings dates from Yahoo (Schwab doesn't provide this)
-        try:
-            stock = yf.Ticker(self.ticker)
-            earnings_dates = stock.earnings_dates
-            if earnings_dates is not None and len(earnings_dates) > 0:
-                earnings_list = earnings_dates.index.tolist()
-                # Make earnings dates tz-naive to match price data
-                self.earnings_dates = [pd.Timestamp(d).tz_localize(None) if pd.Timestamp(d).tzinfo else pd.Timestamp(d) for d in earnings_list]
-                print(f"Loaded {len(self.earnings_dates)} earnings dates")
-            else:
-                self.earnings_dates = []
-                print("No earnings dates available")
-        except Exception as e:
-            print(f"Could not fetch earnings dates: {e}")
+        if self.schwab_only:
             self.earnings_dates = []
+            print("SCHWAB_ONLY mode: skipping Yahoo earnings fetch")
+        else:
+            try:
+                stock = yf.Ticker(self.ticker)
+                earnings_dates = stock.earnings_dates
+                if earnings_dates is not None and len(earnings_dates) > 0:
+                    earnings_list = earnings_dates.index.tolist()
+                    # Make earnings dates tz-naive to match price data
+                    self.earnings_dates = [pd.Timestamp(d).tz_localize(None) if pd.Timestamp(d).tzinfo else pd.Timestamp(d) for d in earnings_list]
+                    print(f"Loaded {len(self.earnings_dates)} earnings dates")
+                else:
+                    self.earnings_dates = []
+                    print("No earnings dates available")
+            except Exception as e:
+                print(f"Could not fetch earnings dates: {e}")
+                self.earnings_dates = []
 
         # Get VIX data - try Schwab first, then Yahoo
         vix_loaded = False
@@ -199,8 +215,8 @@ class CSPDataCollector:
             except Exception as e:
                 print(f"[Schwab] Could not fetch VIX: {e}")
 
-        # Fallback to Yahoo for VIX
-        if not vix_loaded:
+        # Fallback to Yahoo for VIX (disabled in SCHWAB_ONLY mode)
+        if not vix_loaded and not self.schwab_only:
             try:
                 vix = yf.Ticker('^VIX')
                 vix_data = vix.history(period=self.period)
@@ -215,6 +231,8 @@ class CSPDataCollector:
                     print(f"[Yahoo] VIX data loaded: {self.data['VIX'].notna().sum()} values")
             except Exception as e:
                 print(f"Warning: Could not fetch VIX data ({e})")
+        elif not vix_loaded and self.schwab_only:
+            print("SCHWAB_ONLY mode: skipping Yahoo VIX fallback")
 
         # If VIX not loaded, use constant value
         if not vix_loaded or 'VIX' not in self.data.columns or self.data['VIX'].isna().all():
@@ -691,6 +709,100 @@ class CSPDataCollector:
 
         self.data = df
         return df
+
+    def create_contract_targets(
+        self,
+        forward_days: int = 35,
+        delta_buckets: list[float] | None = None,
+    ) -> pd.DataFrame:
+        """Create multi-strike contract-level targets for unified breach prediction.
+
+        For each (date, delta_bucket) pair:
+        1. Convert delta to strike_otm_pct using IV estimate
+        2. Compute strike_price = close * (1 - strike_otm_pct)
+        3. strike_breached = 1 if min(close[t:t+35]) < strike_price else 0
+        4. Add 7 contract interaction features
+
+        Vectorized: computes min_price once per day, then broadcasts across deltas.
+
+        Args:
+            forward_days: Days to hold CSP (default 35).
+            delta_buckets: List of target deltas. Defaults to 9 standard buckets.
+
+        Returns:
+            Expanded DataFrame with ~9x more rows (one per date-delta combination),
+            including columns: target_delta, strike_otm_pct, strike_breached,
+            and 7 contract interaction features.
+        """
+        if delta_buckets is None:
+            delta_buckets = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
+
+        df = self.data.copy()
+
+        # --- Vectorized forward min price (compute once per day) ---
+        close = df['Close'].values
+        n = len(close)
+        min_price_fwd = np.full(n, np.nan)
+        for i in range(n - forward_days):
+            min_price_fwd[i] = close[i:i + forward_days + 1].min()
+
+        df['_min_price_fwd'] = min_price_fwd
+
+        # Pre-compute IV-related columns needed for delta-to-OTM conversion
+        rv = (df.get('Volatility_20D', pd.Series(np.full(n, 20.0), index=df.index)) / 100).values
+        rv = np.clip(rv, 0.01, None)
+        iv_rv_ratio = df.get('IV_RV_Ratio', pd.Series(np.full(n, 1.2), index=df.index)).values
+        iv_rv_ratio = np.clip(iv_rv_ratio, 1.0, 2.5)
+        vol = rv * iv_rv_ratio
+        T = forward_days / 365.0
+
+        # Pre-compute market context arrays for interaction features
+        vix_arr = df.get('VIX', pd.Series(np.full(n, 15.0), index=df.index)).values
+        iv_rank_arr = df.get('IV_Rank', pd.Series(np.full(n, 50.0), index=df.index)).values
+        rsi_arr = df.get('RSI', pd.Series(np.full(n, 50.0), index=df.index)).values
+        atr_pct_arr = df.get('ATR_Pct', pd.Series(np.full(n, 1.0), index=df.index)).values
+
+        # --- Expand rows: one per (date, delta_bucket) ---
+        expanded_frames = []
+
+        for target_delta in delta_buckets:
+            # Delta-to-OTM conversion (vectorized Black-Scholes inverse)
+            strike_otm_pct = vol * np.sqrt(T) * norm.ppf(1 - target_delta)
+            strike_otm_pct = np.clip(strike_otm_pct, 0.01, 0.30)
+
+            strike_price = close * (1 - strike_otm_pct)
+            strike_breached = np.where(
+                np.isnan(min_price_fwd), np.nan,
+                np.where(min_price_fwd < strike_price, 1.0, 0.0)
+            )
+
+            # Build per-delta slice
+            delta_df = df.copy()
+            delta_df['target_delta'] = target_delta
+            delta_df['strike_otm_pct'] = strike_otm_pct
+            delta_df['strike_breached'] = strike_breached
+
+            # 7 contract interaction features
+            delta_df['delta_x_vol'] = target_delta * vol
+            delta_df['delta_x_vix'] = target_delta * vix_arr / 100.0
+            delta_df['delta_x_iv_rank'] = target_delta * iv_rank_arr / 100.0
+            delta_df['delta_squared'] = target_delta ** 2
+            delta_df['delta_x_rsi'] = target_delta * rsi_arr / 100.0
+            delta_df['strike_otm_x_atr'] = strike_otm_pct * atr_pct_arr
+
+            expanded_frames.append(delta_df)
+
+        result = pd.concat(expanded_frames, ignore_index=False)
+        # Drop the helper column and rows without valid target
+        result = result.drop(columns=['_min_price_fwd'], errors='ignore')
+        result = result.dropna(subset=['strike_breached'])
+
+        # Sort by date then delta for deterministic ordering
+        result = result.sort_index(kind='mergesort')
+
+        print(f"Contract targets: {len(df)} dates × {len(delta_buckets)} deltas "
+              f"= {len(result)} rows  (breach rate: {result['strike_breached'].mean():.1%})")
+        return result
 
     def prepare_features(self):
         """Prepare final feature set for modeling"""
