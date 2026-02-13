@@ -1845,7 +1845,7 @@
 
             try {
                 const apiUrl = getApiUrl();
-                const es = new EventSource(`${apiUrl}/stream/${ticker}?interval=10`);
+                const es = new EventSource(`${apiUrl}/stream/${ticker}?interval=10&ngrok-skip-browser-warning=true`);
                 let lastPrice = null;
 
                 es.onmessage = function(event) {
