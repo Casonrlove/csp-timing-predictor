@@ -1411,6 +1411,24 @@
         let chartFullData = null;  // Store full data for range switching
         let currentChartRange = 22;  // Default to 1 month
 
+        // Aggregate raw 30-min candles into N-bar candles (e.g. 12 → 6hr)
+        function aggregateCandles(candles, n) {
+            const out = [];
+            for (let i = 0; i < candles.length; i += n) {
+                const chunk = candles.slice(i, i + n);
+                if (!chunk.length) break;
+                out.push({
+                    date:   chunk[0].date,
+                    open:   chunk[0].open,
+                    high:   Math.max(...chunk.map(c => c.high)),
+                    low:    Math.min(...chunk.map(c => c.low)),
+                    close:  chunk[chunk.length - 1].close,
+                    volume: chunk.reduce((s, c) => s + c.volume, 0),
+                });
+            }
+            return out;
+        }
+
         async function setChartRange(ticker, days) {
             if (!chartFullData) return;
 
@@ -1431,22 +1449,24 @@
                 }
             });
 
-            // For 1W, fetch 30-min intraday candles from the server
-            if (days === 5) {
+            // 1W: 30-min candles | 1M: 6hr candles (12×30min) | 6M: daily candles
+            if (days === 5 || days === 22 || days === 132) {
                 try {
                     const apiUrl = getApiUrl();
-                    const resp = await fetch(`${apiUrl}/chart/${ticker}?range=5`, {
+                    const resp = await fetch(`${apiUrl}/chart/${ticker}?range=${days}`, {
                         headers: { 'ngrok-skip-browser-warning': 'true' }
                     });
                     if (resp.ok) {
                         const cd = await resp.json();
                         if (cd.candles && cd.candles.length > 0) {
-                            renderPriceChart(chartFullData, days, cd.candles);
+                            // 1M: aggregate 30-min → 6hr (12 bars per 6 hours)
+                            const candles = days === 22 ? aggregateCandles(cd.candles, 12) : cd.candles;
+                            renderPriceChart(chartFullData, days, candles);
                             return;
                         }
                     }
                 } catch (e) {
-                    console.warn('Intraday fetch failed, falling back to daily:', e);
+                    console.warn('Chart fetch failed, falling back to daily:', e);
                 }
             }
 
@@ -1465,21 +1485,25 @@
                 priceChartInstance.destroy();
             }
 
-            // Use intraday candles if provided (1W 30-min bars), else daily
+            // Use intraday/external candles if provided, else daily from price_history
             let history, labels, prices, sma20, sma50, sma200;
-            const isIntraday = !!intradayCandles;
+            // intradayCandles covers: 1W (30-min), 1M (6hr aggregated), 6M (daily from Schwab)
+            const isIntraday = !!intradayCandles && intradayCandles[0] && intradayCandles[0].date.includes(' ');
+            const hasExternalCandles = !!intradayCandles;
 
-            if (isIntraday) {
+            if (hasExternalCandles) {
                 history = intradayCandles;
-                labels  = history.map(d => {
-                    // Show time only for intraday (strip the date prefix)
-                    const parts = d.date.split(' ');
-                    return parts[1] ? parts[1].slice(0, 5) : d.date;
-                });
-                prices  = history.map(d => d.close);
-                sma20   = new Array(history.length).fill(null);
-                sma50   = new Array(history.length).fill(null);
-                sma200  = new Array(history.length).fill(null);
+                if (isIntraday) {
+                    // Strip date prefix → show HH:MM for intraday/6hr candles
+                    labels = history.map(d => d.date.split(' ')[1]?.slice(0, 5) ?? d.date);
+                } else {
+                    // Daily Schwab candles (6M): show MM-DD
+                    labels = history.map(d => d.date.slice(5));
+                }
+                prices = history.map(d => d.close);
+                sma20  = new Array(history.length).fill(null);
+                sma50  = new Array(history.length).fill(null);
+                sma200 = new Array(history.length).fill(null);
             } else {
                 const fullHistory = data.price_history;
                 history = fullHistory.slice(-rangeDays);
@@ -1684,6 +1708,8 @@
                                 callback: function(val, index) {
                                     const label = this.getLabelForValue(val);
                                     if (isIntraday) return label; // already HH:MM
+                                    // Daily external candles: labels are already MM-DD
+                                    if (hasExternalCandles) return label;
                                     if (index === prices.length - 1) return 'Today';
                                     return label.slice(5);  // Show MM-DD
                                 }
