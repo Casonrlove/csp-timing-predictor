@@ -1359,7 +1359,7 @@
                                                     const isITM = opt.strike > data.current_price;
                                                     const rowBg = opt.is_suggested ? 'rgba(128, 90, 213, 0.25)' : isITM ? 'var(--bg-row-itm)' : 'var(--bg-row-otm)';
                                                     return `
-                                                    <tr data-opt-key="${data.ticker}_${exp}_${opt.strike.toFixed(2)}" style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
+                                                    <tr style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
                                                         <td style="padding: 6px 8px; color: var(--text-strike);"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.bid.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ask.toFixed(2)}</td>
@@ -1830,7 +1830,7 @@
         // ============================================
         // LIVE STREAMING
         // ============================================
-        const activeStreams = {};  // ticker -> AbortController
+        const activeStreams = {};  // ticker -> EventSource
 
         function toggleLiveStream(ticker) {
             if (activeStreams[ticker]) {
@@ -1840,122 +1840,92 @@
             }
         }
 
-        async function startLiveStream(ticker) {
-            if (activeStreams[ticker]) return;
-
-            const controller = new AbortController();
-            activeStreams[ticker] = controller;
-            let lastPrice = null;
-
-            // Activate badge immediately
-            const badge = document.getElementById(`streamBadge_${ticker}`);
-            if (badge) {
-                badge.style.background = 'rgba(34, 197, 94, 0.8)';
-                badge.style.animation = 'pulse 2s infinite';
-                badge.title = 'Click to stop stream';
-            }
-
-            function handleTick(data) {
-                if (data.error) { stopLiveStream(ticker); return; }
-
-                // --- Options update ---
-                if (data.type === 'options' && Array.isArray(data.options)) {
-                    data.options.forEach(opt => {
-                        const key = `${ticker}_${opt.expiration}_${opt.strike.toFixed(2)}`;
-                        const row = document.querySelector(`tr[data-opt-key="${key}"]`);
-                        if (!row) return;
-                        const cells = row.children;
-                        // Col order: 0=Strike, 1=Bid, 2=Ask, 3=Delta, 4=Model, 5=Edge,
-                        //            6=ROR, 7=θEff, 8=Theta, 9=Vol, 10=Gamma, 11=Vega, 12=Last, 13=Mid, 14=IV
-                        if (cells[1]) cells[1].textContent = opt.bid.toFixed(2);
-                        if (cells[2]) cells[2].textContent = opt.ask.toFixed(2);
-                        if (cells[3]) cells[3].textContent = opt.delta.toFixed(2);
-                        if (cells[4] && opt.model_prob_assignment != null) cells[4].textContent = opt.model_prob_assignment.toFixed(2);
-                        if (cells[5] && opt.edge != null) {
-                            cells[5].textContent = `${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}`;
-                            cells[5].style.color = `var(${opt.edge > 0 ? '--positive-green' : '--negative-red'})`;
-                        }
-                        if (cells[6] && opt.ror != null) cells[6].textContent = `${opt.ror.toFixed(1)}%`;
-                        if (cells[8] && opt.theta != null) cells[8].textContent = opt.theta.toFixed(2);
-                        if (cells[9] && opt.volume != null) cells[9].textContent = opt.volume.toLocaleString();
-                        if (cells[10] && opt.gamma != null) cells[10].textContent = opt.gamma.toFixed(3);
-                        if (cells[11] && opt.vega != null) cells[11].textContent = opt.vega.toFixed(2);
-                        if (cells[12] && opt.last != null) cells[12].textContent = opt.last.toFixed(2);
-                        if (cells[13] && opt.premium != null) cells[13].textContent = opt.premium.toFixed(2);
-                        if (cells[14] && opt.implied_volatility != null) cells[14].textContent = `${(opt.implied_volatility * 100).toFixed(0)}%`;
-                    });
-                    return;
-                }
-
-                // --- Price update ---
-                const priceEl     = document.getElementById(`livePrice_${ticker}`);
-                const changeEl    = document.getElementById(`liveChange_${ticker}`);
-                const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
-                const bidAskBox   = document.getElementById(`liveBidAsk_${ticker}`);
-                const bidEl       = document.getElementById(`liveBid_${ticker}`);
-                const rangeBox    = document.getElementById(`liveRange_${ticker}`);
-                const rangeEl     = document.getElementById(`liveDayRange_${ticker}`);
-                const priceBox    = document.getElementById(`livePriceBox_${ticker}`);
-                if (!priceEl) return;
-
-                if (lastPrice !== null && data.price !== lastPrice) {
-                    priceBox.classList.remove('price-flash-up', 'price-flash-down');
-                    void priceBox.offsetWidth;
-                    priceBox.classList.add(data.price > lastPrice ? 'price-flash-up' : 'price-flash-down');
-                }
-                lastPrice = data.price;
-                priceEl.textContent = `$${data.price.toFixed(2)}`;
-                const sign = data.change >= 0 ? '+' : '';
-                const changeColor = data.change >= 0 ? 'var(--positive-green)' : 'var(--negative-red)';
-                changeEl.innerHTML = `<span style="color:${changeColor}">${sign}${data.change.toFixed(2)} (${sign}${data.change_percent.toFixed(2)}%)</span>`;
-                if (bidAskBox) { bidAskBox.style.display = ''; bidEl.textContent = `$${data.bid.toFixed(2)} / $${data.ask.toFixed(2)}`; }
-                if (rangeBox)  { rangeBox.style.display  = ''; rangeEl.textContent = `$${data.low.toFixed(2)} - $${data.high.toFixed(2)}`; }
-                if (indicatorEl) indicatorEl.style.display = 'inline';
-            }
+        function startLiveStream(ticker) {
+            if (activeStreams[ticker]) return;  // already streaming
 
             try {
                 const apiUrl = getApiUrl();
-                const response = await fetch(
-                    `${apiUrl}/stream/${ticker}?interval=10&include_options=true&min_delta=0.10&max_delta=0.60&options_interval=30`,
-                    {
-                        headers: { 'ngrok-skip-browser-warning': 'true' },
-                        signal: controller.signal,
+                const es = new EventSource(`${apiUrl}/stream/${ticker}?interval=10&ngrok-skip-browser-warning=true`);
+                let lastPrice = null;
+
+                es.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    if (data.error) {
+                        stopLiveStream(ticker);
+                        return;
                     }
-                );
 
-                if (!response.ok || !response.body) { stopLiveStream(ticker); return; }
+                    const priceEl = document.getElementById(`livePrice_${ticker}`);
+                    const changeEl = document.getElementById(`liveChange_${ticker}`);
+                    const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
+                    const bidAskBox = document.getElementById(`liveBidAsk_${ticker}`);
+                    const bidEl = document.getElementById(`liveBid_${ticker}`);
+                    const rangeBox = document.getElementById(`liveRange_${ticker}`);
+                    const rangeEl = document.getElementById(`liveDayRange_${ticker}`);
+                    const priceBox = document.getElementById(`livePriceBox_${ticker}`);
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
+                    if (!priceEl) return;
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            try { handleTick(JSON.parse(line.slice(6))); } catch {}
-                        }
+                    // Flash price on change
+                    if (lastPrice !== null && data.price !== lastPrice) {
+                        priceBox.classList.remove('price-flash-up', 'price-flash-down');
+                        void priceBox.offsetWidth;  // force reflow
+                        priceBox.classList.add(data.price > lastPrice ? 'price-flash-up' : 'price-flash-down');
                     }
-                }
+                    lastPrice = data.price;
+
+                    // Update price
+                    priceEl.textContent = `$${data.price.toFixed(2)}`;
+
+                    // Update change
+                    const sign = data.change >= 0 ? '+' : '';
+                    const changeColor = data.change >= 0 ? 'var(--positive-green)' : 'var(--negative-red)';
+                    changeEl.innerHTML = `<span style="color: ${changeColor}">${sign}${data.change.toFixed(2)} (${sign}${data.change_percent.toFixed(2)}%)</span>`;
+
+                    // Show bid/ask
+                    if (bidAskBox) {
+                        bidAskBox.style.display = '';
+                        bidEl.textContent = `$${data.bid.toFixed(2)} / $${data.ask.toFixed(2)}`;
+                    }
+
+                    // Show day range
+                    if (rangeBox) {
+                        rangeBox.style.display = '';
+                        rangeEl.textContent = `$${data.low.toFixed(2)} - $${data.high.toFixed(2)}`;
+                    }
+
+                    // Show LIVE indicator + activate badge
+                    if (indicatorEl) indicatorEl.style.display = 'inline';
+                    const badge = document.getElementById(`streamBadge_${ticker}`);
+                    if (badge) {
+                        badge.style.background = 'rgba(34, 197, 94, 0.8)';
+                        badge.style.animation = 'pulse 2s infinite';
+                        badge.title = 'Click to stop stream';
+                    }
+                };
+
+                es.onerror = function() {
+                    // Close stale connection and auto-reconnect after 3s.
+                    // ngrok and other proxies drop idle SSE connections; this keeps
+                    // the badge green and reconnects silently.
+                    es.close();
+                    delete activeStreams[ticker];
+                    setTimeout(() => {
+                        if (!activeStreams[ticker]) startLiveStream(ticker);
+                    }, 3000);
+                };
+
+                activeStreams[ticker] = es;
             } catch (e) {
-                if (e.name === 'AbortError') return;
-                console.warn('Stream dropped, reconnecting in 3s:', e.message);
-            }
-
-            // Auto-reconnect unless intentionally stopped
-            if (activeStreams[ticker]) {
-                delete activeStreams[ticker];
-                setTimeout(() => startLiveStream(ticker), 3000);
+                console.error('Failed to start stream:', e);
             }
         }
 
         function stopLiveStream(ticker) {
-            const ctrl = activeStreams[ticker];
-            if (ctrl) { ctrl.abort(); delete activeStreams[ticker]; }
+            if (activeStreams[ticker]) {
+                activeStreams[ticker].close();
+                delete activeStreams[ticker];
+            }
 
             const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
             if (indicatorEl) indicatorEl.style.display = 'none';
