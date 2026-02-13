@@ -56,6 +56,7 @@ def get_next_monthly_expirations(num_months=3, min_dte=15):
 
 # API Base URL
 API_BASE = "https://api.schwabapi.com/marketdata/v1"
+REQUEST_TIMEOUT_SECONDS = 20
 
 
 def _make_request(endpoint, params=None):
@@ -68,14 +69,24 @@ def _make_request(endpoint, params=None):
     }
 
     url = f"{API_BASE}/{endpoint}"
-    response = requests.get(url, headers=headers, params=params)
+    response = requests.get(
+        url,
+        headers=headers,
+        params=params,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
 
     if response.status_code == 401:
         # Token might be invalid, try refreshing
         from schwab_auth import refresh_access_token
         access_token = refresh_access_token()
         headers['Authorization'] = f'Bearer {access_token}'
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
 
     if response.status_code != 200:
         raise Exception(f"API request failed: {response.status_code} - {response.text}")
@@ -136,7 +147,9 @@ def get_stock_price(symbol):
             'close': quote.get('closePrice', 0),
             'volume': quote.get('totalVolume', 0),
             'change': quote.get('netChange', 0),
-            'change_percent': quote.get('netPercentChangeInDouble', 0),
+            'change_percent': (quote.get('netPercentChangeInDouble') or
+                               (quote.get('netChange', 0) / quote['closePrice'] * 100
+                                if quote.get('closePrice') else 0)),
             '52_week_high': quote.get('52WkHigh', 0),
             '52_week_low': quote.get('52WkLow', 0),
             'pe_ratio': quote.get('peRatio', 0),
