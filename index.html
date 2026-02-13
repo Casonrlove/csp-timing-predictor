@@ -1359,7 +1359,7 @@
                                                     const isITM = opt.strike > data.current_price;
                                                     const rowBg = opt.is_suggested ? 'rgba(128, 90, 213, 0.25)' : isITM ? 'var(--bg-row-itm)' : 'var(--bg-row-otm)';
                                                     return `
-                                                    <tr style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
+                                                    <tr data-opt-key="${data.ticker}_${exp}_${opt.strike.toFixed(2)}" style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
                                                         <td style="padding: 6px 8px; color: var(--text-strike);"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.bid.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ask.toFixed(2)}</td>
@@ -1857,6 +1857,37 @@
 
             function handleTick(data) {
                 if (data.error) { stopLiveStream(ticker); return; }
+
+                // --- Options update ---
+                if (data.type === 'options' && Array.isArray(data.options)) {
+                    data.options.forEach(opt => {
+                        const key = `${ticker}_${opt.expiration}_${opt.strike.toFixed(2)}`;
+                        const row = document.querySelector(`tr[data-opt-key="${key}"]`);
+                        if (!row) return;
+                        const cells = row.children;
+                        // Col order: 0=Strike, 1=Bid, 2=Ask, 3=Delta, 4=Model, 5=Edge,
+                        //            6=ROR, 7=θEff, 8=Theta, 9=Vol, 10=Gamma, 11=Vega, 12=Last, 13=Mid, 14=IV
+                        if (cells[1]) cells[1].textContent = opt.bid.toFixed(2);
+                        if (cells[2]) cells[2].textContent = opt.ask.toFixed(2);
+                        if (cells[3]) cells[3].textContent = opt.delta.toFixed(2);
+                        if (cells[4] && opt.model_prob_assignment != null) cells[4].textContent = opt.model_prob_assignment.toFixed(2);
+                        if (cells[5] && opt.edge != null) {
+                            cells[5].textContent = `${opt.edge > 0 ? '+' : ''}${opt.edge.toFixed(1)}`;
+                            cells[5].style.color = `var(${opt.edge > 0 ? '--positive-green' : '--negative-red'})`;
+                        }
+                        if (cells[6] && opt.ror != null) cells[6].textContent = `${opt.ror.toFixed(1)}%`;
+                        if (cells[8] && opt.theta != null) cells[8].textContent = opt.theta.toFixed(2);
+                        if (cells[9] && opt.volume != null) cells[9].textContent = opt.volume.toLocaleString();
+                        if (cells[10] && opt.gamma != null) cells[10].textContent = opt.gamma.toFixed(3);
+                        if (cells[11] && opt.vega != null) cells[11].textContent = opt.vega.toFixed(2);
+                        if (cells[12] && opt.last != null) cells[12].textContent = opt.last.toFixed(2);
+                        if (cells[13] && opt.premium != null) cells[13].textContent = opt.premium.toFixed(2);
+                        if (cells[14] && opt.implied_volatility != null) cells[14].textContent = `${(opt.implied_volatility * 100).toFixed(0)}%`;
+                    });
+                    return;
+                }
+
+                // --- Price update ---
                 const priceEl     = document.getElementById(`livePrice_${ticker}`);
                 const changeEl    = document.getElementById(`liveChange_${ticker}`);
                 const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
@@ -1884,10 +1915,13 @@
 
             try {
                 const apiUrl = getApiUrl();
-                const response = await fetch(`${apiUrl}/stream/${ticker}?interval=10`, {
-                    headers: { 'ngrok-skip-browser-warning': 'true' },
-                    signal: controller.signal,
-                });
+                const response = await fetch(
+                    `${apiUrl}/stream/${ticker}?interval=10&include_options=true&min_delta=0.10&max_delta=0.60&options_interval=30`,
+                    {
+                        headers: { 'ngrok-skip-browser-warning': 'true' },
+                        signal: controller.signal,
+                    }
+                );
 
                 if (!response.ok || !response.body) { stopLiveStream(ticker); return; }
 
