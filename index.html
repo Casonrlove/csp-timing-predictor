@@ -1109,26 +1109,42 @@
                             <div id="chartTooltip_${data.ticker}" style="position: absolute; top: 10px; right: 10px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 10; min-width: 120px;">
                             </div>
                         </div>
-                        <div style="margin-top: 10px; display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.75rem; color: #8b949e;">
+                        <div style="position: relative; height: 110px; margin-top: 4px;">
+                            <canvas id="macdChart_${data.ticker}"></canvas>
+                        </div>
+                        <div style="margin-top: 6px; display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.75rem; color: #8b949e;">
                             <span>━ Price</span>
-                            <span style="color: #58a6ff;">━ SMA 20</span>
-                            <span style="color: #d29922;">━ SMA 50</span>
-                            <span style="color: #a371f7;">━ SMA 200</span>
-                            <span style="color: rgba(63, 185, 80, 0.8);">▓ Safe Zone (Model)</span>
-                            <span style="color: rgba(248, 81, 73, 0.5);">▓ Risk Zone (-5%)</span>
+                            <span style="color: #38bdf8;">━ EMA 12</span>
+                            <span style="color: #fb923c;">━ EMA 26</span>
+                            <span style="color: #a3e635;">━ EMA 9</span>
+                            <span style="color: #d29922;">╌ SMA 50</span>
+                            <span style="color: #a371f7;">╌ SMA 200</span>
+                            <span style="color: rgba(63, 185, 80, 0.8);">▓ Safe Zone</span>
+                            <span style="color: rgba(248, 81, 73, 0.5);">▓ Risk Zone</span>
+                            <span style="color: #f97316;">━ MACD</span>
+                            <span style="color: #818cf8;">━ Signal</span>
+                            <span style="color: #22c55e;">▓ Hist</span>
                         </div>
                     </div>
                     ` : ''}
 
                     <div class="technical-details">
+                        ${(() => {
+                            const _px = data.price_history ? data.price_history.map(d => d.close) : [];
+                            const _last = _px[_px.length - 1] || 0;
+                            const _ema = (p, e12, e26, e9) => {
+                                const pct = (v) => v != null && _last ? ((_last / v - 1) * 100).toFixed(2) + '%' : '-';
+                                return `
                         <table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:12px;">
                             <thead>
                                 <tr style="color:#718096;border-bottom:1px solid #30363d;">
                                     <th style="padding:4px 8px;font-weight:500;text-align:center;">Support</th>
                                     <th style="padding:4px 8px;font-weight:500;text-align:center;">Resistance</th>
-                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">SMA20</th>
-                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">SMA50</th>
-                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">SMA200</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">EMA 12</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">EMA 26</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">EMA 9</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">SMA 50</th>
+                                    <th style="padding:4px 8px;font-weight:500;text-align:center;">SMA 200</th>
                                     <th style="padding:4px 8px;font-weight:500;text-align:center;">RSI</th>
                                     <th style="padding:4px 8px;font-weight:500;text-align:center;">ATR</th>
                                     <th style="padding:4px 8px;font-weight:500;text-align:center;">VIX</th>
@@ -1138,7 +1154,9 @@
                                 <tr style="color:#e2e8f0;text-align:center;">
                                     <td style="padding:4px 8px;">${data.technical_context.support_resistance.distance_from_support.toFixed(2)}%</td>
                                     <td style="padding:4px 8px;">${data.technical_context.support_resistance.distance_from_resistance.toFixed(2)}%</td>
-                                    <td style="padding:4px 8px;">${data.technical_context.moving_averages.price_to_sma20.toFixed(2)}%</td>
+                                    <td style="padding:4px 8px;">${pct(e12)}</td>
+                                    <td style="padding:4px 8px;">${pct(e26)}</td>
+                                    <td style="padding:4px 8px;">${pct(e9)}</td>
                                     <td style="padding:4px 8px;">${data.technical_context.moving_averages.price_to_sma50.toFixed(2)}%</td>
                                     <td style="padding:4px 8px;">${data.technical_context.moving_averages.price_to_sma200.toFixed(2)}%</td>
                                     <td style="padding:4px 8px;">${data.technical_context.momentum.rsi.toFixed(2)}</td>
@@ -1146,129 +1164,70 @@
                                     <td style="padding:4px 8px;">${data.technical_context.volatility.vix.toFixed(2)}</td>
                                 </tr>
                             </tbody>
-                        </table>
+                        </table>`;
+                            };
+                            if (_px.length >= 26) {
+                                const _e12v = computeEMA(_px, 12); const _e26v = computeEMA(_px, 26); const _e9v = computeEMA(_px, 9);
+                                return _ema(_px, _e12v[_e12v.length-1], _e26v[_e26v.length-1], _e9v[_e9v.length-1]);
+                            }
+                            return _ema(_px, null, null, null);
+                        })()}
 
                         ${data.options_data && data.options_data.edge > 0 ? `
-                        <div class="technical-section" style="background: rgba(22, 27, 34, 0.8); padding: 15px; border-radius: 8px; margin-top: 15px; border: 1px solid #30363d;">
-                            <h4 style="color: #58a6ff; margin-bottom: 12px;">📈 Suggested CSP Trade</h4>
-
-                            ${data.options_data.edge !== undefined ? `
-                            <div style="background: ${data.options_data.edge > 0 ? 'rgba(63, 185, 80, 0.2)' : 'rgba(248, 81, 73, 0.2)'}; padding: 12px; border-radius: 8px; margin-bottom: 15px; border: 2px solid ${data.options_data.edge > 0 ? '#3fb950' : '#f85149'};">
-                                <div style="font-size: 1.1rem; font-weight: bold; margin-bottom: 8px;">
-                                    ${data.options_data.edge > 0 ? '✅ POSITIVE EDGE' : '⚠️ NEGATIVE EDGE'}
-                                </div>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; font-size: 0.9rem;">
-                                    <div>
-                                        <div style="opacity: 0.8;">Market Delta:</div>
-                                        <div style="font-weight: bold;">${(data.options_data.market_delta * 100).toFixed(1)}%</div>
-                                    </div>
-                                    <div>
-                                        <div style="opacity: 0.8;">Model Risk:</div>
-                                        <div style="font-weight: bold;">${(data.options_data.model_prob_assignment * 100).toFixed(1)}%</div>
-                                    </div>
-                                    <div>
-                                        <div style="opacity: 0.8;">Your Edge:</div>
-                                        <div style="font-weight: bold; color: ${data.options_data.edge > 0 ? '#3fb950' : '#f85149'};">${data.options_data.edge > 0 ? '+' : ''}${data.options_data.edge.toFixed(1)}pp</div>
-                                    </div>
-                                </div>
-                                <div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.9;">
-                                    ${data.options_data.edge > 0 ?
-                                        '🎯 Market overpricing risk - favorable premium!' :
-                                        '⚠️ Market underpricing risk - proceed with caution'}
-                                </div>
-                            </div>
-                            ` : ''}
-
-                            <div class="technical-grid">
-                                <div class="technical-item">
-                                    <span><strong>Strike:</strong></span>
-                                    <span><strong>$${data.options_data.strike.toFixed(2)}</strong></span>
-                                </div>
-                                <div class="technical-item">
-                                    <span><strong>Stock Price:</strong></span>
-                                    <span><strong>$${data.current_price.toFixed(2)}</strong></span>
-                                </div>
-                                <div class="technical-item">
-                                    <span><strong>Premium:</strong></span>
-                                    <span><strong>$${data.options_data.premium.toFixed(2)}</strong></span>
-                                </div>
-                                <div class="technical-item">
-                                    <span>Delta:</span>
-                                    <span>${data.options_data.delta.toFixed(3)}</span>
-                                </div>
-                                <div class="technical-item">
-                                    <span>DTE:</span>
-                                    <span>${data.options_data.dte} days</span>
-                                </div>
-                                <div class="technical-item" style="background: rgba(63, 185, 80, 0.2); border-color: #3fb950;">
-                                    <span><strong>ROR:</strong></span>
-                                    <span><strong style="color: #3fb950;">${data.options_data.ror.toFixed(2)}%</strong></span>
-                                </div>
-                                <div class="technical-item" style="background: rgba(63, 185, 80, 0.2); border-color: #3fb950;">
-                                    <span><strong>Annual ROR:</strong></span>
-                                    <span><strong style="color: #3fb950;">${data.options_data.annualized_ror.toFixed(1)}%</strong></span>
-                                </div>
-                                <div class="technical-item" style="background: rgba(210, 153, 34, 0.2); border-color: #d29922;">
-                                    <span><strong>Theta Eff:</strong></span>
-                                    <span><strong style="color: #d29922;">${data.options_data.theta_efficiency ? data.options_data.theta_efficiency.toFixed(3) + '%' : '-'}</strong></span>
-                                </div>
-                                <div class="technical-item">
-                                    <span>Theta/Day:</span>
-                                    <span>${data.options_data.theta_efficiency.toFixed(3)}%</span>
-                                </div>
-                                <div class="technical-item">
-                                    <span>Expiration:</span>
-                                    <span>${data.options_data.expiration}</span>
-                                </div>
-                                <div class="technical-item">
-                                    <span>Volume:</span>
-                                    <span>${data.options_data.volume}</span>
-                                </div>
-                                <div class="technical-item">
-                                    <span>Open Interest:</span>
-                                    <span>${data.options_data.open_interest}</span>
-                                </div>
-                                <div class="technical-item">
-                                    <span>Moneyness:</span>
-                                    <span>${(data.options_data.moneyness * 100).toFixed(2)}%</span>
-                                </div>
-                            </div>
-
-                            <div style="margin-top: 15px; padding: 10px; background: #21262d; border-radius: 6px; border: 1px solid #30363d;">
-                                <h5 style="margin: 0 0 8px 0; font-size: 0.9rem; color: #8b949e;">📊 Advanced Greeks</h5>
-                                <div class="technical-grid" style="font-size: 0.85rem;">
-                                    <div class="technical-item">
-                                        <span>Gamma:</span>
-                                        <span>${data.options_data.gamma.toFixed(4)}</span>
-                                    </div>
-                                    <div class="technical-item">
-                                        <span>Vega:</span>
-                                        <span>$${data.options_data.vega.toFixed(4)}</span>
-                                    </div>
-                                    <div class="technical-item">
-                                        <span>IV:</span>
-                                        <span>${(data.options_data.implied_volatility * 100).toFixed(2)}%</span>
-                                    </div>
-                                    <div class="technical-item">
-                                        <span>Model:</span>
-                                        <span style="font-size: 0.75rem;">${data.options_data.model_used}</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div style="margin-top: 10px; font-size: 0.85rem; color: #8b949e;">
-                                ${data.data_source ? `
-                                <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;">
-                                    <span style="background: ${data.data_source.greeks.includes('Schwab') ? '#238636' : '#6e40c9'}; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem;">
-                                        Greeks: ${data.data_source.greeks}
-                                    </span>
-                                    <span style="background: ${data.data_source.price === 'Schwab' ? '#238636' : '#6e40c9'}; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem;">
-                                        Price: ${data.data_source.price}
-                                    </span>
-                                </div>
-                                ` : ''}
-                                <em>Note: Options data only available during market hours (9:30 AM - 4:00 PM ET)</em>
-                            </div>
+                        <div class="technical-section" style="background: rgba(22, 27, 34, 0.8); padding: 12px 15px; border-radius: 8px; margin-top: 15px; border: 1px solid #30363d;">
+                            <h4 style="color: #58a6ff; margin: 0 0 10px 0; font-size: 0.9rem;">📈 Suggested CSP Trade</h4>
+                            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:8px;">
+                                <thead>
+                                    <tr style="color:#718096;border-bottom:1px solid #30363d;">
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Strike</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Price</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Premium</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Delta</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">DTE</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Expiry</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">ROR</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Ann. ROR</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr style="color:#e2e8f0;text-align:center;">
+                                        <td style="padding:4px 8px;font-weight:bold;">$${data.options_data.strike.toFixed(2)}</td>
+                                        <td style="padding:4px 8px;">$${data.current_price.toFixed(2)}</td>
+                                        <td style="padding:4px 8px;font-weight:bold;">$${data.options_data.premium.toFixed(2)}</td>
+                                        <td style="padding:4px 8px;">${data.options_data.delta.toFixed(3)}</td>
+                                        <td style="padding:4px 8px;">${data.options_data.dte}d</td>
+                                        <td style="padding:4px 8px;">${data.options_data.expiration}</td>
+                                        <td style="padding:4px 8px;color:#3fb950;font-weight:bold;">${data.options_data.ror.toFixed(2)}%</td>
+                                        <td style="padding:4px 8px;color:#3fb950;font-weight:bold;">${data.options_data.annualized_ror.toFixed(1)}%</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                                <thead>
+                                    <tr style="color:#718096;border-bottom:1px solid #30363d;">
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Edge</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Mkt Delta</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Model Risk</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">IV</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Gamma</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Vega</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">Volume</th>
+                                        <th style="padding:4px 8px;font-weight:500;text-align:center;">OI</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr style="color:#e2e8f0;text-align:center;">
+                                        <td style="padding:4px 8px;font-weight:bold;color:${data.options_data.edge > 0 ? '#3fb950' : '#f85149'};">${data.options_data.edge > 0 ? '+' : ''}${data.options_data.edge.toFixed(1)}pp</td>
+                                        <td style="padding:4px 8px;">${(data.options_data.market_delta * 100).toFixed(1)}%</td>
+                                        <td style="padding:4px 8px;">${(data.options_data.model_prob_assignment * 100).toFixed(1)}%</td>
+                                        <td style="padding:4px 8px;">${(data.options_data.implied_volatility * 100).toFixed(2)}%</td>
+                                        <td style="padding:4px 8px;">${data.options_data.gamma.toFixed(4)}</td>
+                                        <td style="padding:4px 8px;">${data.options_data.vega.toFixed(4)}</td>
+                                        <td style="padding:4px 8px;">${data.options_data.volume}</td>
+                                        <td style="padding:4px 8px;">${data.options_data.open_interest}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                         ` : ''}
 
@@ -1386,8 +1345,37 @@
         }
 
         let priceChartInstance = null;
+        let macdChartInstance  = null;
         let chartFullData = null;  // Store full data for range switching
         let currentChartRange = 22;  // Default to 1 month
+
+        function computeEMA(data, period) {
+            const k = 2 / (period + 1);
+            const out = Array(data.length).fill(null);
+            if (data.length < period) return out;
+            let sum = 0;
+            for (let i = 0; i < period; i++) sum += data[i];
+            out[period - 1] = sum / period;
+            for (let i = period; i < data.length; i++) {
+                out[i] = data[i] * k + out[i - 1] * (1 - k);
+            }
+            return out;
+        }
+
+        function computeMACD(prices, fast = 12, slow = 26, signal = 9) {
+            const emaFast = computeEMA(prices, fast);
+            const emaSlow = computeEMA(prices, slow);
+            const macd = prices.map((_, i) =>
+                emaFast[i] != null && emaSlow[i] != null ? emaFast[i] - emaSlow[i] : null
+            );
+            const macdSlice = macd.slice(slow - 1);
+            const signalSlice = computeEMA(macdSlice, signal);
+            const signalFull = Array(slow - 1).fill(null).concat(signalSlice);
+            const histogram = prices.map((_, i) =>
+                macd[i] != null && signalFull[i] != null ? macd[i] - signalFull[i] : null
+            );
+            return { macd, signal: signalFull, histogram };
+        }
 
         // Aggregate raw 30-min candles into N-bar candles (e.g. 12 → 6hr)
         function aggregateCandles(candles, n) {
@@ -1486,6 +1474,10 @@
                 priceChartInstance.destroy();
                 priceChartInstance = null;
             }
+            if (macdChartInstance) {
+                macdChartInstance.destroy();
+                macdChartInstance = null;
+            }
 
             // Determine data source
             let history, hasSMA, isIntraday;
@@ -1549,6 +1541,12 @@
                 ? history.map(d => ({ x: toTs(d.date), y: d[key] ?? null }))
                 : [];
 
+            // EMA lines computed client-side
+            const ema12vals = computeEMA(prices, 12);
+            const ema26vals = computeEMA(prices, 26);
+            const ema9vals  = computeEMA(prices, 9);
+            const emaLine = (vals) => history.map((d, i) => ({ x: toTs(d.date), y: vals[i] ?? null }));
+
             const tooltipEl = document.getElementById(`chartTooltip_${data.ticker}`);
 
             priceChartInstance = new Chart(ctx, {
@@ -1569,8 +1567,10 @@
                                 unchanged: '#8b949e',
                             },
                         },
+                        { type:'line', label:'EMA 12', data: emaLine(ema12vals), borderColor:'#38bdf8', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
+                        { type:'line', label:'EMA 26', data: emaLine(ema26vals), borderColor:'#fb923c', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
+                        { type:'line', label:'EMA 9',  data: emaLine(ema9vals),  borderColor:'#a3e635', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
                         ...(hasSMA ? [
-                            { type:'line', label:'SMA 20',  data: smaLine('sma20'),  borderColor:'#58a6ff', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[4,3] },
                             { type:'line', label:'SMA 50',  data: smaLine('sma50'),  borderColor:'#d29922', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[4,3] },
                             { type:'line', label:'SMA 200', data: smaLine('sma200'), borderColor:'#a371f7', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[6,3] },
                         ] : []),
@@ -1632,6 +1632,74 @@
                     }
                 }
             });
+
+            // MACD panel
+            const macdCanvas = document.getElementById(`macdChart_${data.ticker}`);
+            if (macdCanvas) {
+                const { macd, signal: sig, histogram } = computeMACD(prices);
+                const macdData  = history.map((d, i) => macd[i]      != null ? { x: toTs(d.date), y: macd[i] }      : null).filter(Boolean);
+                const sigData   = history.map((d, i) => sig[i]       != null ? { x: toTs(d.date), y: sig[i] }       : null).filter(Boolean);
+                const histData  = history.map((d, i) => histogram[i] != null ? { x: toTs(d.date), y: histogram[i] } : null).filter(Boolean);
+                const histColors = histData.map(pt => pt.y >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
+
+                macdChartInstance = new Chart(macdCanvas.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        datasets: [
+                            {
+                                type: 'bar',
+                                label: 'Histogram',
+                                data: histData,
+                                backgroundColor: histColors,
+                                borderWidth: 0,
+                                barPercentage: 0.9,
+                                categoryPercentage: 1.0,
+                            },
+                            {
+                                type: 'line',
+                                label: 'MACD',
+                                data: macdData,
+                                borderColor: '#f97316',
+                                backgroundColor: 'transparent',
+                                borderWidth: 1.5,
+                                pointRadius: 0,
+                            },
+                            {
+                                type: 'line',
+                                label: 'Signal',
+                                data: sigData,
+                                borderColor: '#818cf8',
+                                backgroundColor: 'transparent',
+                                borderWidth: 1.5,
+                                pointRadius: 0,
+                            },
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: { duration: 200 },
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { enabled: false },
+                        },
+                        scales: {
+                            x: {
+                                type: 'timeseries',
+                                time: { displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'MMM yy' } },
+                                grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
+                                ticks: { color:'#718096', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 }
+                            },
+                            y: {
+                                position: 'left',
+                                grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
+                                ticks: { color:'#718096', maxTicksLimit: 4, callback: v => v.toFixed(2) }
+                            }
+                        }
+                    }
+                });
+            }
         }
 
         async function predictMulti() {
