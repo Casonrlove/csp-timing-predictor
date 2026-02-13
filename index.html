@@ -1033,6 +1033,8 @@
                         <span style="color: #718096;">|</span>
                         <span style="color: #8b949e;">${data.date}</span>
                         <span style="color: #718096;">|</span>
+                        <span style="background: rgba(88,66,145,0.5); padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; color: #c4b5fd;">${data.model_type || 'unknown'}</span>
+                        <span style="color: #718096;">|</span>
                         <span style="color: #8b949e; font-size: 0.75rem;">P(Safe): <span style="color:#3fb950;">${(data.p_safe * 100).toFixed(0)}%</span> &nbsp; P(Down): <span style="color:#f85149;">${(data.p_downside * 100).toFixed(0)}%</span></span>
                         ${data.data_source ? `
                         <span style="color: #718096;">|</span>

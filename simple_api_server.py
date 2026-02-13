@@ -262,14 +262,14 @@ if MODEL is None and not PER_TICKER_MODE:
     print("ERROR: No trained model found!")
 
 # Optional probability calibrator trained from settled prediction logs.
-calibrator_path = 'timing_probability_calibrator.pkl'
+calibrator_path = 'contract_probability_calibrator.pkl' if CONTRACT_MODE else 'timing_probability_calibrator.pkl'
 if os.path.exists(calibrator_path):
     try:
         cal_data = joblib.load(calibrator_path)
         PROB_CALIBRATOR = cal_data.get('calibrator')
         PROB_CALIBRATION_METHOD = cal_data.get('method')
         if PROB_CALIBRATOR is not None:
-            print(f"✓ Probability calibrator loaded ({PROB_CALIBRATION_METHOD})")
+            print(f"✓ Probability calibrator loaded ({PROB_CALIBRATION_METHOD}) from {calibrator_path}")
     except Exception as e:
         print(f"⚠ Failed to load probability calibrator: {e}")
         PROB_CALIBRATOR = None
@@ -290,52 +290,6 @@ if FEATURE_NAMES and any(f in FEATURE_NAMES for f in LSTM_FEATURES):
             LSTM_GENERATOR = None
     else:
         print(f"⚠ LSTM features required but {lstm_path} not found")
-
-# Load strike probability model for accurate edge calculation
-STRIKE_PROB_MODEL = None
-strike_prob_path_v3 = 'strike_model_v3.pkl'
-strike_prob_path_v2 = 'strike_model_v2.pkl'
-strike_prob_path = 'strike_probability_model.pkl'
-
-# Try V3 model first (two-stage residual, best accuracy)
-if os.path.exists(strike_prob_path_v3):
-    try:
-        from strike_probability import StrikeProbabilityCalculatorV3
-        STRIKE_PROB_MODEL = StrikeProbabilityCalculatorV3(strike_prob_path_v3)
-        STRIKE_PROB_VERSION = 3
-        print("✓ Strike probability model V3 loaded (two-stage residual, ROC-AUC 0.76)")
-    except Exception as e:
-        print(f"⚠ Failed to load V3 model: {e}")
-        STRIKE_PROB_MODEL = None
-        STRIKE_PROB_VERSION = 0
-
-# Fall back to V2 (ticker-specific, trained on option outcomes)
-if STRIKE_PROB_MODEL is None and os.path.exists(strike_prob_path_v2):
-    try:
-        from strike_probability import StrikeProbabilityCalculatorV2
-        STRIKE_PROB_MODEL = StrikeProbabilityCalculatorV2(strike_prob_path_v2)
-        STRIKE_PROB_VERSION = 2
-        print("✓ Strike probability model V2 loaded (ticker-specific)")
-    except Exception as e:
-        print(f"⚠ Failed to load V2 model: {e}")
-        STRIKE_PROB_MODEL = None
-        STRIKE_PROB_VERSION = 0
-
-# Fall back to V1
-if STRIKE_PROB_MODEL is None and os.path.exists(strike_prob_path):
-    try:
-        from strike_probability import StrikeProbabilityCalculator
-        STRIKE_PROB_MODEL = StrikeProbabilityCalculator(strike_prob_path)
-        STRIKE_PROB_VERSION = 1
-        print(f"✓ Strike probability model V1 loaded from {strike_prob_path}")
-    except Exception as e:
-        print(f"⚠ Failed to load strike probability model: {e}")
-        STRIKE_PROB_MODEL = None
-        STRIKE_PROB_VERSION = 0
-
-if STRIKE_PROB_MODEL is None:
-    STRIKE_PROB_VERSION = 0
-    print(f"⚠ No strike probability model available")
 
 
 def apply_probability_calibration(raw_p_safe: float) -> float:
@@ -1098,15 +1052,11 @@ def predict(request: PredictionRequest):
 
             print(f"Found {len(all_options)} options via {options_source}")
 
-            # Calculate edge: contract model (preferred) or strike model (fallback)
+            # Calculate edge: contract model provides P(breach) per delta bucket
             use_contract_edge = CONTRACT_MODE and hasattr(collector, '_contract_breach_probs')
-            use_strike_model = (not use_contract_edge and
-                                STRIKE_PROB_MODEL is not None and STRIKE_PROB_MODEL.model_loaded)
 
             if use_contract_edge:
                 print("[Edge] Using contract model P(breach)")
-            elif use_strike_model:
-                print("[Edge] Using strike-specific probability model")
             else:
                 print("[Edge] No edge model available - edge estimation disabled")
 
@@ -1127,19 +1077,13 @@ def predict(request: PredictionRequest):
                     closest_delta = min(breach_probs.keys(), key=lambda d: abs(d - market_delta))
                     model_prob = breach_probs[closest_delta]
 
-                elif use_strike_model:
-                    if STRIKE_PROB_VERSION in (2, 3):
-                        model_prob = STRIKE_PROB_MODEL.predict_for_delta(collector.data, market_delta, ticker)
-                    else:
-                        model_prob = STRIKE_PROB_MODEL.predict_strike_probability(collector.data, otm_pct)
-
                 if model_prob is None:
                     option['market_delta'] = round(market_delta, 3)
                     option['model_prob_assignment'] = None
                     option['edge'] = None
                     option['edge_prob'] = None
                     option['edge_pp'] = None
-                    option['edge_signal'] = 'NO_EDGE_ESTIMATE' if not use_contract_edge else 'NO_EDGE_MODEL'
+                    option['edge_signal'] = 'NO_EDGE_MODEL' if use_contract_edge else 'NO_EDGE_ESTIMATE'
                     option['spread_pct'] = None
                     option['ev_per_share'] = None
                     option['ev_pct_of_strike'] = None
@@ -1161,12 +1105,7 @@ def predict(request: PredictionRequest):
                 expected_assignment_loss = model_prob * strike * assignment_loss_pct
                 expected_value = premium - expected_assignment_loss - slippage_cost
 
-                # Contract model: timing is embedded, no timing_multiplier needed
-                if use_contract_edge:
-                    risk_adjusted_ev = expected_value
-                else:
-                    timing_multiplier = 0.75 + (0.5 * p_safe)
-                    risk_adjusted_ev = expected_value * timing_multiplier
+                risk_adjusted_ev = expected_value
 
                 option['market_delta'] = round(market_delta, 3)
                 option['model_prob_assignment'] = round(model_prob, 3)
@@ -1181,22 +1120,16 @@ def predict(request: PredictionRequest):
                 option['is_suggested'] = False
 
             # Select best option via EV optimization with uncertainty no-trade band.
-            has_edge_model = use_contract_edge or use_strike_model
+            has_edge_model = use_contract_edge
             if all_options:
                 if not has_edge_model:
                     options_data = None
                     print("No calibrated edge model - EV ranking unavailable, no suggestion")
                 else:
-                    # Contract mode embeds timing — skip the timing uncertainty gate
-                    timing_uncertain = (not use_contract_edge) and abs(csp_score) < 0.15
                     near_earnings = bool(current_data.get('Near_Earnings', False))
                     days_to_earnings = float(current_data.get('Days_To_Earnings', 999))
 
-                    if timing_uncertain:
-                        options_data = None
-                        print(f"No-trade band: timing uncertainty (csp_score={csp_score:.3f})")
-                        print("Skipping suggestions due to low timing decisiveness")
-                    elif near_earnings and days_to_earnings <= 7:
+                    if near_earnings and days_to_earnings <= 7:
                         options_data = None
                         print(f"No-trade band: earnings risk (days_to_earnings={days_to_earnings:.0f})")
                         print("Skipping suggestions due to near-term earnings event risk")
