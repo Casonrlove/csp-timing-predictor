@@ -1103,7 +1103,7 @@
                                 <button onclick="setChartRange('${data.ticker}', 132)" class="range-btn" data-range="132" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">6M</button>
                             </div>
                         </div>
-                        <div style="position: relative; height: 450px;">
+                        <div style="position: relative; height: 600px;">
                             <canvas id="priceChart_${data.ticker}"></canvas>
                             <div id="chartTooltip_${data.ticker}" style="position: absolute; top: 10px; right: 10px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 10; min-width: 120px;">
                             </div>
@@ -1411,7 +1411,7 @@
         let chartFullData = null;  // Store full data for range switching
         let currentChartRange = 22;  // Default to 1 month
 
-        function setChartRange(ticker, days) {
+        async function setChartRange(ticker, days) {
             if (!chartFullData) return;
 
             currentChartRange = days;
@@ -1431,11 +1431,29 @@
                 }
             });
 
-            // Re-render chart with new range
+            // For 1W, fetch 30-min intraday candles from the server
+            if (days === 5) {
+                try {
+                    const apiUrl = getApiUrl();
+                    const resp = await fetch(`${apiUrl}/chart/${ticker}?range=5`, {
+                        headers: { 'ngrok-skip-browser-warning': 'true' }
+                    });
+                    if (resp.ok) {
+                        const cd = await resp.json();
+                        if (cd.candles && cd.candles.length > 0) {
+                            renderPriceChart(chartFullData, days, cd.candles);
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Intraday fetch failed, falling back to daily:', e);
+                }
+            }
+
             renderPriceChart(chartFullData, days);
         }
 
-        function renderPriceChart(data, rangeDays = 22) {
+        function renderPriceChart(data, rangeDays = 22, intradayCandles = null) {
             const ctx = document.getElementById(`priceChart_${data.ticker}`);
             if (!ctx) return;
 
@@ -1447,19 +1465,33 @@
                 priceChartInstance.destroy();
             }
 
-            // Filter history to requested range
-            const fullHistory = data.price_history;
-            const history = fullHistory.slice(-rangeDays);
+            // Use intraday candles if provided (1W 30-min bars), else daily
+            let history, labels, prices, sma20, sma50, sma200;
+            const isIntraday = !!intradayCandles;
 
-            const labels = history.map(d => d.date);
-            const prices = history.map(d => d.close);
-            const sma20 = history.map(d => d.sma20);
-            const sma50 = history.map(d => d.sma50);
-            const sma200 = history.map(d => d.sma200);
+            if (isIntraday) {
+                history = intradayCandles;
+                labels  = history.map(d => {
+                    // Show time only for intraday (strip the date prefix)
+                    const parts = d.date.split(' ');
+                    return parts[1] ? parts[1].slice(0, 5) : d.date;
+                });
+                prices  = history.map(d => d.close);
+                sma20   = new Array(history.length).fill(null);
+                sma50   = new Array(history.length).fill(null);
+                sma200  = new Array(history.length).fill(null);
+            } else {
+                const fullHistory = data.price_history;
+                history = fullHistory.slice(-rangeDays);
+                labels  = history.map(d => d.date);
+                prices  = history.map(d => d.close);
+                sma20   = history.map(d => d.sma20);
+                sma50   = history.map(d => d.sma50);
+                sma200  = history.map(d => d.sma200);
+            }
 
-            // Projection length: at most 1/4 of the history window so it
-            // never exceeds 1/5 of the total chart width (1/4 ÷ (1 + 1/4) = 1/5)
-            const projDays = Math.max(1, Math.round(rangeDays / 4));
+            // No forward projection for intraday; for daily, cap at 1/5 of chart width
+            const projDays = isIntraday ? 0 : Math.max(1, Math.round(rangeDays / 4));
 
             const lastDate = new Date(history[history.length - 1].date);
             const projectionDates = [];
@@ -1648,13 +1680,11 @@
                             },
                             ticks: {
                                 color: '#8b949e',
-                                maxTicksLimit: 10,
+                                maxTicksLimit: isIntraday ? 8 : 10,
                                 callback: function(val, index) {
                                     const label = this.getLabelForValue(val);
-                                    // Show projection start marker
-                                    if (index === prices.length - 1) {
-                                        return 'Today';
-                                    }
+                                    if (isIntraday) return label; // already HH:MM
+                                    if (index === prices.length - 1) return 'Today';
                                     return label.slice(5);  // Show MM-DD
                                 }
                             }
