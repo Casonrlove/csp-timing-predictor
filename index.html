@@ -239,6 +239,24 @@
             100% { transform: rotate(360deg); }
         }
 
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        @keyframes flashGreen {
+            0% { background-color: rgba(34, 197, 94, 0.3); }
+            100% { background-color: transparent; }
+        }
+
+        @keyframes flashRed {
+            0% { background-color: rgba(239, 68, 68, 0.3); }
+            100% { background-color: transparent; }
+        }
+
+        .price-flash-up { animation: flashGreen 0.6s ease-out; }
+        .price-flash-down { animation: flashRed 0.6s ease-out; }
+
         .result {
             margin-top: 20px;
             padding: 20px;
@@ -1042,13 +1060,28 @@
                         <span style="background: ${data.data_source.greeks.includes('Schwab') ? 'rgba(35, 134, 54, 0.8)' : 'rgba(110, 64, 201, 0.8)'}; padding: 4px 10px; border-radius: 4px;">
                             🔢 Greeks: ${data.data_source.greeks.includes('Schwab') ? 'Schwab API' : 'Black-Scholes'}
                         </span>
+                        <span id="streamBadge_${data.ticker}" onclick="toggleLiveStream('${data.ticker}')" style="cursor: pointer; background: rgba(55, 65, 81, 0.8); padding: 4px 10px; border-radius: 4px;">
+                            📡 Live
+                        </span>
                     </div>
                     ` : ''}
 
                     <div class="price-info">
-                        <div class="info-box">
-                            <div class="info-label">Current Price</div>
-                            <div class="info-value">$${data.current_price.toFixed(2)}</div>
+                        <div class="info-box" id="livePriceBox_${data.ticker}" style="position: relative;">
+                            <div class="info-label">
+                                Current Price
+                                <span id="liveIndicator_${data.ticker}" style="display: none; margin-left: 6px; font-size: 0.65rem; color: var(--positive-green); animation: pulse 2s infinite;">LIVE</span>
+                            </div>
+                            <div class="info-value" id="livePrice_${data.ticker}">$${data.current_price.toFixed(2)}</div>
+                            <div id="liveChange_${data.ticker}" style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px;"></div>
+                        </div>
+                        <div class="info-box" id="liveBidAsk_${data.ticker}" style="display: none;">
+                            <div class="info-label">Bid / Ask</div>
+                            <div class="info-value" id="liveBid_${data.ticker}" style="font-size: 0.9rem;">-</div>
+                        </div>
+                        <div class="info-box" id="liveRange_${data.ticker}" style="display: none;">
+                            <div class="info-label">Day Range</div>
+                            <div class="info-value" id="liveDayRange_${data.ticker}" style="font-size: 0.9rem;">-</div>
                         </div>
                         <div class="info-box">
                             <div class="info-label">Date</div>
@@ -1792,6 +1825,121 @@
 
         document.getElementById('multiTickers').addEventListener('input', (e) => {
             e.target.value = e.target.value.toUpperCase();
+        });
+
+        // ============================================
+        // LIVE STREAMING
+        // ============================================
+        const activeStreams = {};  // ticker -> EventSource
+
+        function toggleLiveStream(ticker) {
+            if (activeStreams[ticker]) {
+                stopLiveStream(ticker);
+            } else {
+                startLiveStream(ticker);
+            }
+        }
+
+        function startLiveStream(ticker) {
+            if (activeStreams[ticker]) return;  // already streaming
+
+            try {
+                const apiUrl = getApiUrl();
+                const es = new EventSource(`${apiUrl}/stream/${ticker}?interval=10`);
+                let lastPrice = null;
+
+                es.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    if (data.error) {
+                        stopLiveStream(ticker);
+                        return;
+                    }
+
+                    const priceEl = document.getElementById(`livePrice_${ticker}`);
+                    const changeEl = document.getElementById(`liveChange_${ticker}`);
+                    const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
+                    const bidAskBox = document.getElementById(`liveBidAsk_${ticker}`);
+                    const bidEl = document.getElementById(`liveBid_${ticker}`);
+                    const rangeBox = document.getElementById(`liveRange_${ticker}`);
+                    const rangeEl = document.getElementById(`liveDayRange_${ticker}`);
+                    const priceBox = document.getElementById(`livePriceBox_${ticker}`);
+
+                    if (!priceEl) return;
+
+                    // Flash price on change
+                    if (lastPrice !== null && data.price !== lastPrice) {
+                        priceBox.classList.remove('price-flash-up', 'price-flash-down');
+                        void priceBox.offsetWidth;  // force reflow
+                        priceBox.classList.add(data.price > lastPrice ? 'price-flash-up' : 'price-flash-down');
+                    }
+                    lastPrice = data.price;
+
+                    // Update price
+                    priceEl.textContent = `$${data.price.toFixed(2)}`;
+
+                    // Update change
+                    const sign = data.change >= 0 ? '+' : '';
+                    const changeColor = data.change >= 0 ? 'var(--positive-green)' : 'var(--negative-red)';
+                    changeEl.innerHTML = `<span style="color: ${changeColor}">${sign}${data.change.toFixed(2)} (${sign}${data.change_percent.toFixed(2)}%)</span>`;
+
+                    // Show bid/ask
+                    if (bidAskBox) {
+                        bidAskBox.style.display = '';
+                        bidEl.textContent = `$${data.bid.toFixed(2)} / $${data.ask.toFixed(2)}`;
+                    }
+
+                    // Show day range
+                    if (rangeBox) {
+                        rangeBox.style.display = '';
+                        rangeEl.textContent = `$${data.low.toFixed(2)} - $${data.high.toFixed(2)}`;
+                    }
+
+                    // Show LIVE indicator + activate badge
+                    if (indicatorEl) indicatorEl.style.display = 'inline';
+                    const badge = document.getElementById(`streamBadge_${ticker}`);
+                    if (badge) {
+                        badge.style.background = 'rgba(34, 197, 94, 0.8)';
+                        badge.style.animation = 'pulse 2s infinite';
+                        badge.title = 'Click to stop stream';
+                    }
+                };
+
+                es.onerror = function() {
+                    stopLiveStream(ticker);
+                };
+
+                activeStreams[ticker] = es;
+            } catch (e) {
+                console.error('Failed to start stream:', e);
+            }
+        }
+
+        function stopLiveStream(ticker) {
+            if (activeStreams[ticker]) {
+                activeStreams[ticker].close();
+                delete activeStreams[ticker];
+            }
+
+            const indicatorEl = document.getElementById(`liveIndicator_${ticker}`);
+            if (indicatorEl) indicatorEl.style.display = 'none';
+
+            const badge = document.getElementById(`streamBadge_${ticker}`);
+            if (badge) {
+                badge.style.background = 'rgba(55, 65, 81, 0.8)';
+                badge.style.animation = 'none';
+                badge.title = 'Click to start stream';
+            }
+
+            const bidAskBox = document.getElementById(`liveBidAsk_${ticker}`);
+            if (bidAskBox) bidAskBox.style.display = 'none';
+
+            const rangeBox = document.getElementById(`liveRange_${ticker}`);
+            if (rangeBox) rangeBox.style.display = 'none';
+        }
+
+        // Clean up streams when navigating away
+        window.addEventListener('beforeunload', () => {
+            Object.keys(activeStreams).forEach(stopLiveStream);
         });
 
         // Apply theme on load
