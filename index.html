@@ -1619,7 +1619,7 @@
                                 if (tm.dataPoints && tm.dataPoints.length) {
                                     const dp = tm.dataPoints[0];
                                     const raw = dp.raw;
-                                    let html = `<div style="font-weight:700;color:var(--text-primary);margin-bottom:5px;font-size:0.8rem;">${tm.title?.[0] ?? ''}</div>`;
+                                    let html = `<div style="font-weight:700;color:#e2e8f0;margin-bottom:5px;font-size:0.8rem;">${tm.title?.[0] ?? ''}</div>`;
                                     if (raw && raw.o !== undefined) {
                                         const col = raw.c >= raw.o ? '#22c55e' : '#ef4444';
                                         html += `<div style="color:${col};font-size:0.78rem;">O: $${raw.o.toFixed(2)} H: $${raw.h.toFixed(2)}</div>`;
@@ -1643,13 +1643,13 @@
                                 displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'MMM yy' }
                             },
                             grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
-                            ticks: { color:'var(--text-secondary)', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 }
+                            ticks: { color:'#718096', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 }
                         },
                         y: {
                             position: 'left',
                             grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
                             ticks: {
-                                color: 'var(--text-secondary)',
+                                color: '#718096',
                                 callback: v => '$' + v.toFixed(v >= 100 ? 0 : 2)
                             }
                         }
