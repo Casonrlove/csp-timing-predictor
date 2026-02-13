@@ -846,7 +846,7 @@
                             const data = await response.json();
 
                             // If there's a suggested trade (requires BOTH CSP Score > 0 AND positive edge)
-                            if (data.options_data && data.csp_score > 0 && data.options_data.edge > 0) {
+                            if (data.options_data && data.csp_score > 0 && data.options_data.edge > 0 && Math.abs(data.options_data.delta) <= 0.4) {
                                 opportunities.push({
                                     ticker: ticker,
                                     strike: data.options_data.strike,
@@ -1762,7 +1762,7 @@
                     const options = data.options_by_expiration[firstExp]?.options || [];
                     bestOption = options.reduce((best, opt) => {
                         const delta = Math.abs(opt.delta);
-                        if (delta >= 0.20 && delta <= 0.30) {
+                        if (delta >= 0.20 && delta <= 0.40) {
                             if (!best || Math.abs(delta - 0.25) < Math.abs(Math.abs(best.delta) - 0.25)) {
                                 return opt;
                             }
