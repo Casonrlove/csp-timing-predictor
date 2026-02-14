@@ -64,10 +64,31 @@ OPTUNA_PARAMS_FILE = 'optuna_params_v3.json'
 OPTUNA_CONTRACT_PARAMS_FILE = 'optuna_contract_params.json'
 
 TICKER_GROUPS = {
-    'high_vol':     ['TSLA', 'NVDA', 'AMD', 'MSTR', 'COIN', 'PLTR'],
-    'tech_growth':  ['META', 'GOOGL', 'AMZN', 'NFLX', 'CRM'],
-    'tech_stable':  ['AAPL', 'MSFT', 'V', 'MA'],
-    'etf':          ['SPY', 'QQQ', 'IWM'],
+    # Bucket 1 — High-Vol Semis/AI (tradeable)
+    'high_vol_semi': [
+        'NVDA', 'AMD', 'TSLA', 'PLTR', 'SMCI', 'ARM', 'MU', 'MRVL',
+        'LRCX', 'AMAT', 'KLAC', 'ON', 'APP', 'RDDT', 'ACLS', 'ENTG',
+        'MPWR', 'COHR', 'CRDO', 'AVGO',
+    ],
+    # Bucket 2 — Large-Cap Tech (tradeable)
+    'large_cap_tech': [
+        'MSFT', 'AAPL', 'GOOGL', 'META', 'AMZN', 'NFLX', 'CRM', 'ADBE',
+        'NOW', 'SNOW', 'SHOP', 'UBER', 'PANW', 'CRWD', 'ZS', 'DDOG',
+        'NET', 'DASH', 'ABNB', 'ORCL',
+    ],
+    # Bucket 3 — Dividend/Value (tradeable)
+    'dividend_value': [
+        'TXN', 'QCOM', 'CSCO', 'IBM', 'INTC', 'VZ', 'T', 'JNJ',
+        'ABBV', 'MRK', 'PFE', 'KO', 'PEP', 'WMT', 'JPM', 'BAC',
+        'V', 'MA', 'CVX', 'XOM',
+    ],
+    # Buckets 4+5 — ETFs (reference; model can still predict but not traded)
+    'etf': [
+        'QQQ', 'TQQQ', 'SQQQ', 'XLK', 'SMH', 'SOXX', 'SOXL', 'ARKK',
+        'IGV', 'CIBR', 'BOTZ', 'IYW', 'VGT', 'ROBO',
+        'SPY', 'VOO', 'IVV', 'VTI', 'IWM', 'MDY', 'DIA',
+        'GLD', 'SLV', 'TLT', 'HYG', 'XLF', 'XLE', 'XLV', 'SCHB',
+    ],
 }
 
 META_FEATURE_NAMES = ['xgb_prob', 'lgbm_prob', 'VIX', 'VIX_Rank', 'Regime_Trend']

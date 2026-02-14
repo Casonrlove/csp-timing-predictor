@@ -833,7 +833,7 @@ def predict(request: PredictionRequest):
         # ---- Contract model dispatch (highest priority) ----
         if CONTRACT_MODE:
             from scipy.stats import norm as _norm
-            group = CONTRACT_GROUP_MAPPING.get(ticker, 'tech_growth')
+            group = CONTRACT_GROUP_MAPPING.get(ticker, 'large_cap_tech')
             model_key = f'{group}_{vix_regime}'
             if model_key not in CONTRACT_SCALERS:
                 alt_key = f'{group}_low_vix' if vix_regime == 'high_vix' else f'{group}_high_vix'
