@@ -98,14 +98,38 @@ def fit_garch(returns):
 # GPU Monte Carlo simulation
 # ---------------------------------------------------------------------------
 
+BATCH_SIZE = 10_000_000   # paths per GPU batch — stays well within 16GB VRAM
+
+
+def _run_batch(current_price, omega_t, alpha_t, beta_t, sigma2_0,
+               batch, n_days, device, collect_sample_paths):
+    """Run one batch of price paths. Returns (S_final, S_min, optional S_paths)."""
+    z_all = torch.randn(n_days, batch, device=device, dtype=torch.float32)
+
+    S     = torch.full((batch,), float(current_price), device=device, dtype=torch.float32)
+    var   = torch.full((batch,), float(sigma2_0),      device=device, dtype=torch.float32)
+    S_min = S.clone()
+
+    path_buf = [S[:SAMPLE_PATHS].clone().cpu()] if collect_sample_paths else None
+
+    for t in range(n_days):
+        eps   = z_all[t] * torch.sqrt(var)
+        S     = S * torch.exp(eps - 0.5 * var)
+        var   = (omega_t + alpha_t * eps ** 2 + beta_t * var).clamp_(min=1e-8)
+        S_min = torch.minimum(S_min, S)
+        if collect_sample_paths:
+            path_buf.append(S[:SAMPLE_PATHS].clone().cpu())
+
+    S_paths = torch.stack(path_buf, dim=1) if collect_sample_paths else None
+    return S, S_min, S_paths
+
+
 def run_monte_carlo(current_price, omega, alpha, beta, sigma2_0,
                     n_paths, n_days, device):
     """
-    Simulate n_paths price paths of n_days using GARCH(1,1) on GPU.
-
-    All n_paths × n_days standard normals are pre-generated in one GPU call
-    so the memory bus is fully saturated. The GARCH time loop is then a series
-    of large vectorised operations rather than many small kernel launches.
+    Simulate n_paths price paths using GARCH(1,1) on GPU in batches of
+    BATCH_SIZE so the random tensor never exceeds ~1.4 GB VRAM regardless
+    of total path count.
 
     Returns:
         S_final : (n_paths,) tensor — terminal prices
@@ -116,27 +140,32 @@ def run_monte_carlo(current_price, omega, alpha, beta, sigma2_0,
     alpha_t = torch.tensor(alpha, device=device, dtype=torch.float32)
     beta_t  = torch.tensor(beta,  device=device, dtype=torch.float32)
 
-    # Pre-generate ALL random shocks at once — fills the GPU memory bus
-    # Shape: (n_days, n_paths)  — axis 0 = time, axis 1 = path
-    z_all = torch.randn(n_days, n_paths, device=device, dtype=torch.float32)
+    all_S_final = []
+    all_S_min   = []
+    S_paths     = None
 
-    S     = torch.full((n_paths,), float(current_price), device=device, dtype=torch.float32)
-    var   = torch.full((n_paths,), float(sigma2_0),      device=device, dtype=torch.float32)
-    S_min = S.clone()
+    n_batches = (n_paths + BATCH_SIZE - 1) // BATCH_SIZE
 
-    # Store sample paths for chart
-    path_buf = [S[:SAMPLE_PATHS].clone().cpu()]
+    for i in range(n_batches):
+        batch = min(BATCH_SIZE, n_paths - i * BATCH_SIZE)
+        collect = (i == 0)   # only grab sample paths from first batch
+        S_f, S_m, S_p = _run_batch(
+            current_price, omega_t, alpha_t, beta_t, sigma2_0,
+            batch, n_days, device, collect
+        )
+        all_S_final.append(S_f.cpu())
+        all_S_min.append(S_m.cpu())
+        if collect:
+            S_paths = S_p
+        if n_batches > 1:
+            print(f"  Batch {i+1}/{n_batches} done", end='\r')
 
-    for t in range(n_days):
-        sigma = torch.sqrt(var)                        # (n_paths,)
-        eps   = z_all[t] * sigma                       # scaled shock
-        S     = S * torch.exp(eps - 0.5 * var)         # log-normal step
-        var   = (omega_t + alpha_t * eps ** 2 + beta_t * var).clamp_(min=1e-8)
-        S_min = torch.minimum(S_min, S)
-        path_buf.append(S[:SAMPLE_PATHS].clone().cpu())
+    if n_batches > 1:
+        print()
 
-    S_paths = torch.stack(path_buf, dim=1)  # (SAMPLE_PATHS, n_days+1)
-    return S, S_min, S_paths
+    S_final = torch.cat(all_S_final)
+    S_min   = torch.cat(all_S_min)
+    return S_final, S_min, S_paths
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +280,11 @@ def main():
     # -----------------------------------------------------------------------
     # 5. GPU simulation
     # -----------------------------------------------------------------------
-    vram_gb = n_paths * fwd * 4 / 1e9  # float32 = 4 bytes
+    batch_gb  = min(n_paths, BATCH_SIZE) * fwd * 4 / 1e9
+    n_batches = (n_paths + BATCH_SIZE - 1) // BATCH_SIZE
     print(f"\nRunning {n_paths:,} paths × {fwd} days on {device}  "
-          f"(~{vram_gb:.1f} GB VRAM for random tensor)...")
+          f"({n_batches} batch{'es' if n_batches > 1 else ''}, "
+          f"~{batch_gb:.1f} GB VRAM per batch)...")
     with torch.no_grad():
         S_final, S_min, S_paths = run_monte_carlo(
             current_price, omega, alpha, beta, sigma2_0,
