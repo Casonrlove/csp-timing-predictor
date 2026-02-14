@@ -460,6 +460,57 @@
             border-color: var(--accent-purple);
         }
 
+        /* Autocomplete dropdown */
+        .ticker-input-wrapper {
+            position: relative;
+        }
+        .ticker-dropdown {
+            display: none;
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            z-index: 1000;
+            max-height: 340px;
+            overflow-y: auto;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        }
+        .td-item {
+            padding: 9px 14px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.1s;
+        }
+        .td-item:last-child { border-bottom: none; }
+        .td-item:hover, .td-item.td-active {
+            background: var(--bg-card);
+        }
+        .td-ticker {
+            font-weight: 700;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            letter-spacing: 0.03em;
+        }
+        .td-item[data-ref="true"] .td-ticker { color: var(--text-secondary); }
+        .td-bucket {
+            font-size: 0.72rem;
+            color: var(--text-secondary);
+            background: var(--bg-row-alt);
+            padding: 2px 7px;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+        .td-item[data-ref="true"] .td-bucket {
+            opacity: 0.55;
+            font-style: italic;
+        }
+
         small {
             color: var(--text-secondary) !important;
         }
@@ -628,28 +679,12 @@
             <h2>Single Ticker Prediction</h2>
             <div class="input-group">
                 <label for="ticker">Stock Ticker</label>
-                <input type="text" id="ticker" placeholder="NVDA" style="text-transform: uppercase;">
-                <div class="quick-tickers">
-                    <div class="quick-ticker" onclick="setTicker('AAPL')">AAPL</div>
-                    <div class="quick-ticker" onclick="setTicker('AMD')">AMD</div>
-                    <div class="quick-ticker" onclick="setTicker('AMZN')">AMZN</div>
-                    <div class="quick-ticker" onclick="setTicker('GOOGL')">GOOGL</div>
-                    <div class="quick-ticker" onclick="setTicker('JPM')">JPM</div>
-                    <div class="quick-ticker" onclick="setTicker('META')">META</div>
-                    <div class="quick-ticker" onclick="setTicker('MSFT')">MSFT</div>
-                    <div class="quick-ticker" onclick="setTicker('NFLX')">NFLX</div>
-                    <div class="quick-ticker" onclick="setTicker('NVDA')">NVDA</div>
-                    <div class="quick-ticker" onclick="setTicker('PLTR')">PLTR</div>
-                    <div class="quick-ticker" onclick="setTicker('QQQ')">QQQ</div>
-                    <div class="quick-ticker" onclick="setTicker('SCHD')">SCHD</div>
-                    <div class="quick-ticker" onclick="setTicker('SPY')">SPY</div>
-                    <div class="quick-ticker" onclick="setTicker('SQQQ')">SQQQ</div>
-                    <div class="quick-ticker" onclick="setTicker('TQQQ')">TQQQ</div>
-                    <div class="quick-ticker" onclick="setTicker('TXN')">TXN</div>
-                    <div class="quick-ticker" onclick="setTicker('TSLA')">TSLA</div>
-                    <div class="quick-ticker" onclick="setTicker('V')">V</div>
-                    <div class="quick-ticker" onclick="setTicker('VOO')">VOO</div>
-                    <div class="quick-ticker" onclick="setTicker('VTI')">VTI</div>
+                <div class="ticker-input-wrapper">
+                    <input type="text" id="ticker" placeholder="Search: NV → NVDA, AM → AMD…" style="text-transform: uppercase; width: 100%; box-sizing: border-box;" autocomplete="off" spellcheck="false">
+                    <div id="tickerDropdown" class="ticker-dropdown"></div>
+                </div>
+                <div class="quick-tickers" id="quickTickers" style="margin-top: 10px;">
+                    <!-- Populated from TICKER_BUCKETS[0] by JS -->
                 </div>
             </div>
             <button onclick="predictSingle()">🔮 Get Prediction</button>
@@ -817,8 +852,152 @@
         // Check token status on page load
         setTimeout(checkTokenStatus, 1000);
 
-        // Popular tickers to scan for top opportunities
-        const SCAN_TICKERS = ['NVDA', 'AMD', 'AMZN', 'TSLA', 'TQQQ', 'SQQQ'];
+        // ---------------------------------------------------------------
+        // Ticker Buckets — single source of truth for all 5 groups
+        // tradeable: true  → scanned for CSP opportunities
+        // tradeable: false → reference/curiosity only (searchable but not scanned)
+        // ---------------------------------------------------------------
+        const TICKER_BUCKETS = {
+            'High-Vol Semis/AI': {
+                tickers: ['NVDA','AMD','TSLA','PLTR','SMCI','ARM','MU','MRVL',
+                          'LRCX','AMAT','KLAC','ON','APP','RDDT','ACLS','ENTG',
+                          'MPWR','COHR','CRDO','AVGO'],
+                tradeable: true,
+                ivFilter: 40,   // flag tickers whose IV is below this threshold
+                color: '#805ad5',
+            },
+            'Large-Cap Tech': {
+                tickers: ['MSFT','AAPL','GOOGL','META','AMZN','NFLX','CRM','ADBE',
+                          'NOW','SNOW','SHOP','UBER','PANW','CRWD','ZS','DDOG',
+                          'NET','DASH','ABNB','ORCL'],
+                tradeable: true,
+                color: '#3b82f6',
+            },
+            'Dividend/Value': {
+                tickers: ['TXN','QCOM','CSCO','IBM','INTC','VZ','T','JNJ',
+                          'ABBV','MRK','PFE','KO','PEP','WMT','JPM','BAC',
+                          'V','MA','CVX','XOM'],
+                tradeable: true,
+                color: '#22c55e',
+            },
+            'Tech ETFs': {
+                tickers: ['QQQ','TQQQ','SQQQ','XLK','SMH','SOXX','SOXL','ARKK',
+                          'IGV','CIBR','BOTZ','QTUM','AIQ','TECL','FNGU','IYW',
+                          'VGT','FDN','ROBO','HACK'],
+                tradeable: false,
+                color: '#f59e0b',
+            },
+            'Broad Market ETFs': {
+                tickers: ['SPY','VOO','IVV','VTI','IWM','MDY','DIA','EFA',
+                          'EEM','GLD','SLV','TLT','HYG','LQD','XLF','XLE',
+                          'XLV','XLI','SCHB','VEA'],
+                tradeable: false,
+                color: '#64748b',
+            },
+        };
+
+        // Flat list for autocomplete — prefix & contains matching
+        const ALL_TICKERS_AC = Object.entries(TICKER_BUCKETS).flatMap(([bucket, data]) =>
+            data.tickers.map(t => ({ ticker: t, bucket, tradeable: data.tradeable, color: data.color }))
+        );
+
+        // Tradeable tickers for the scanner (Buckets 1–3)
+        const SCAN_TICKERS = Object.entries(TICKER_BUCKETS)
+            .filter(([, d]) => d.tradeable)
+            .flatMap(([, d]) => d.tickers);
+
+        // ---------------------------------------------------------------
+        // Populate quick-ticker chips from Bucket 1 (High-Vol Semis/AI)
+        // ---------------------------------------------------------------
+        (function buildQuickTickers() {
+            const container = document.getElementById('quickTickers');
+            if (!container) return;
+            const b1 = TICKER_BUCKETS['High-Vol Semis/AI'].tickers;
+            container.innerHTML = b1.map(t =>
+                `<div class="quick-ticker" onclick="setTicker('${t}')">${t}</div>`
+            ).join('');
+        })();
+
+        // ---------------------------------------------------------------
+        // Autocomplete for main #ticker input
+        // ---------------------------------------------------------------
+        (function setupAutocomplete() {
+            const input    = document.getElementById('ticker');
+            const dropdown = document.getElementById('tickerDropdown');
+            let activeIdx  = -1;
+
+            function renderDropdown(query) {
+                const q = query.trim().toUpperCase();
+                if (!q) { dropdown.style.display = 'none'; return; }
+
+                const prefix   = ALL_TICKERS_AC.filter(t => t.ticker.startsWith(q));
+                const contains = ALL_TICKERS_AC.filter(t => !t.ticker.startsWith(q) && t.ticker.includes(q));
+                const matches  = [...prefix, ...contains].slice(0, 10);
+
+                if (!matches.length) { dropdown.style.display = 'none'; return; }
+
+                dropdown.innerHTML = matches.map((m, i) => `
+                    <div class="td-item" data-ticker="${m.ticker}" data-ref="${!m.tradeable}" data-idx="${i}">
+                        <span class="td-ticker">${m.ticker}</span>
+                        <span class="td-bucket" style="border-left: 3px solid ${m.color}; padding-left: 8px;">
+                            ${m.bucket}${!m.tradeable ? ' · ref' : ''}
+                        </span>
+                    </div>`).join('');
+
+                dropdown.querySelectorAll('.td-item').forEach(el => {
+                    el.addEventListener('mousedown', e => {
+                        e.preventDefault();
+                        selectDropdownTicker(el.dataset.ticker);
+                    });
+                });
+
+                activeIdx = -1;
+                dropdown.style.display = 'block';
+            }
+
+            function highlightActive() {
+                dropdown.querySelectorAll('.td-item').forEach((el, i) =>
+                    el.classList.toggle('td-active', i === activeIdx));
+                const active = dropdown.querySelector('.td-active');
+                if (active) active.scrollIntoView({ block: 'nearest' });
+            }
+
+            function selectDropdownTicker(ticker) {
+                input.value = ticker;
+                dropdown.style.display = 'none';
+                activeIdx = -1;
+                input.focus();
+            }
+
+            input.addEventListener('input', e => renderDropdown(e.target.value));
+            input.addEventListener('focus', e => { if (e.target.value) renderDropdown(e.target.value); });
+
+            input.addEventListener('keydown', e => {
+                const items = dropdown.querySelectorAll('.td-item');
+                if (!items.length) return;
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    activeIdx = Math.min(activeIdx + 1, items.length - 1);
+                    highlightActive();
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    activeIdx = Math.max(activeIdx - 1, 0);
+                    highlightActive();
+                } else if (e.key === 'Enter' && activeIdx >= 0) {
+                    e.preventDefault();
+                    selectDropdownTicker(items[activeIdx].dataset.ticker);
+                } else if (e.key === 'Escape') {
+                    dropdown.style.display = 'none';
+                    activeIdx = -1;
+                }
+            });
+
+            document.addEventListener('click', e => {
+                if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        })();
 
         async function scanTopOpportunities() {
             const resultsDiv = document.getElementById('topOpportunities');
@@ -933,6 +1112,8 @@
 
         function setTicker(ticker) {
             document.getElementById('ticker').value = ticker;
+            const dd = document.getElementById('tickerDropdown');
+            if (dd) dd.style.display = 'none';
         }
 
         // Store current data for expiration switching
