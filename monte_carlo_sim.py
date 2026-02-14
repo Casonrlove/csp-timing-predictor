@@ -5,7 +5,7 @@ Standalone script. Does NOT integrate with the API server.
 
 Usage:
     python monte_carlo_sim.py NVDA
-    python monte_carlo_sim.py NVDA --paths 500000
+    python monte_carlo_sim.py NVDA --paths 10000000
     python monte_carlo_sim.py NVDA --no-gpu
     python monte_carlo_sim.py NVDA --save-only
     python monte_carlo_sim.py NVDA --forward-days 45
@@ -102,27 +102,36 @@ def run_monte_carlo(current_price, omega, alpha, beta, sigma2_0,
                     n_paths, n_days, device):
     """
     Simulate n_paths price paths of n_days using GARCH(1,1) on GPU.
+
+    All n_paths × n_days standard normals are pre-generated in one GPU call
+    so the memory bus is fully saturated. The GARCH time loop is then a series
+    of large vectorised operations rather than many small kernel launches.
+
     Returns:
         S_final : (n_paths,) tensor — terminal prices
         S_min   : (n_paths,) tensor — path minimums (for breach detection)
         S_paths : (SAMPLE_PATHS, n_days+1) tensor — sampled paths for plotting
     """
-    S     = torch.full((n_paths,), float(current_price), device=device, dtype=torch.float32)
-    var   = torch.full((n_paths,), float(sigma2_0),      device=device, dtype=torch.float32)
-    S_min = S.clone()
-
     omega_t = torch.tensor(omega, device=device, dtype=torch.float32)
     alpha_t = torch.tensor(alpha, device=device, dtype=torch.float32)
     beta_t  = torch.tensor(beta,  device=device, dtype=torch.float32)
 
+    # Pre-generate ALL random shocks at once — fills the GPU memory bus
+    # Shape: (n_days, n_paths)  — axis 0 = time, axis 1 = path
+    z_all = torch.randn(n_days, n_paths, device=device, dtype=torch.float32)
+
+    S     = torch.full((n_paths,), float(current_price), device=device, dtype=torch.float32)
+    var   = torch.full((n_paths,), float(sigma2_0),      device=device, dtype=torch.float32)
+    S_min = S.clone()
+
     # Store sample paths for chart
     path_buf = [S[:SAMPLE_PATHS].clone().cpu()]
 
-    for _ in range(n_days):
-        sigma = torch.sqrt(var.clamp(min=1e-8))
-        eps   = torch.randn(n_paths, device=device, dtype=torch.float32) * sigma
-        S     = S * torch.exp(eps - 0.5 * var)
-        var   = (omega_t + alpha_t * eps ** 2 + beta_t * var).clamp(min=1e-8)
+    for t in range(n_days):
+        sigma = torch.sqrt(var)                        # (n_paths,)
+        eps   = z_all[t] * sigma                       # scaled shock
+        S     = S * torch.exp(eps - 0.5 * var)         # log-normal step
+        var   = (omega_t + alpha_t * eps ** 2 + beta_t * var).clamp_(min=1e-8)
         S_min = torch.minimum(S_min, S)
         path_buf.append(S[:SAMPLE_PATHS].clone().cpu())
 
@@ -148,7 +157,7 @@ def delta_to_strike(current_price, delta, vol_est, forward_days):
 def main():
     parser = argparse.ArgumentParser(description='GPU Monte Carlo CSP Simulator')
     parser.add_argument('ticker',            type=str)
-    parser.add_argument('--paths',           type=int,   default=100_000)
+    parser.add_argument('--paths',           type=int,   default=5_000_000)
     parser.add_argument('--forward-days',    type=int,   default=FORWARD_DAYS)
     parser.add_argument('--no-gpu',          action='store_true')
     parser.add_argument('--save-only',       action='store_true',
@@ -242,7 +251,9 @@ def main():
     # -----------------------------------------------------------------------
     # 5. GPU simulation
     # -----------------------------------------------------------------------
-    print(f"\nRunning {n_paths:,} paths × {fwd} days on {device}...")
+    vram_gb = n_paths * fwd * 4 / 1e9  # float32 = 4 bytes
+    print(f"\nRunning {n_paths:,} paths × {fwd} days on {device}  "
+          f"(~{vram_gb:.1f} GB VRAM for random tensor)...")
     with torch.no_grad():
         S_final, S_min, S_paths = run_monte_carlo(
             current_price, omega, alpha, beta, sigma2_0,
