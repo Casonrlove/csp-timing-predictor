@@ -962,11 +962,12 @@
                 if (active) active.scrollIntoView({ block: 'nearest' });
             }
 
-            function selectDropdownTicker(ticker) {
+            function selectDropdownTicker(ticker, andPredict = false) {
                 input.value = ticker;
                 dropdown.style.display = 'none';
                 activeIdx = -1;
                 input.focus();
+                if (andPredict) predictSingle();
             }
 
             input.addEventListener('input', e => renderDropdown(e.target.value));
@@ -974,18 +975,42 @@
 
             input.addEventListener('keydown', e => {
                 const items = dropdown.querySelectorAll('.td-item');
-                if (!items.length) return;
+                const dropdownOpen = dropdown.style.display === 'block' && items.length > 0;
+
                 if (e.key === 'ArrowDown') {
+                    if (!dropdownOpen) return;
                     e.preventDefault();
                     activeIdx = Math.min(activeIdx + 1, items.length - 1);
                     highlightActive();
+
                 } else if (e.key === 'ArrowUp') {
+                    if (!dropdownOpen) return;
                     e.preventDefault();
                     activeIdx = Math.max(activeIdx - 1, 0);
                     highlightActive();
-                } else if (e.key === 'Enter' && activeIdx >= 0) {
+
+                } else if (e.key === 'Tab') {
+                    if (!dropdownOpen) return;
                     e.preventDefault();
-                    selectDropdownTicker(items[activeIdx].dataset.ticker);
+                    // Tab: autofill with the highlighted item, or the first/only match — no prediction
+                    const target = activeIdx >= 0 ? items[activeIdx] : items[0];
+                    selectDropdownTicker(target.dataset.ticker, false);
+
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (dropdownOpen && activeIdx >= 0) {
+                        // Arrow-highlighted item → autofill + predict
+                        selectDropdownTicker(items[activeIdx].dataset.ticker, true);
+                    } else if (dropdownOpen && items.length === 1) {
+                        // Only one match → autofill + predict
+                        selectDropdownTicker(items[0].dataset.ticker, true);
+                    } else {
+                        // Dropdown closed or multiple options — use whatever is in the box and predict
+                        dropdown.style.display = 'none';
+                        activeIdx = -1;
+                        predictSingle();
+                    }
+
                 } else if (e.key === 'Escape') {
                     dropdown.style.display = 'none';
                     activeIdx = -1;
