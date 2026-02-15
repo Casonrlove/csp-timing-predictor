@@ -258,7 +258,7 @@ if not CONTRACT_MODE and not ENSEMBLE_MODE and not PER_TICKER_MODE:
             print(f"✓ Global model loaded: {MODEL}")
             break
 
-if MODEL is None and not PER_TICKER_MODE:
+if MODEL is None and not PER_TICKER_MODE and not ENSEMBLE_MODE and not CONTRACT_MODE:
     print("ERROR: No trained model found!")
 
 # Optional probability calibrator trained from settled prediction logs.
