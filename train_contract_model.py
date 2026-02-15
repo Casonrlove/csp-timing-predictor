@@ -406,6 +406,15 @@ class ContractModelTrainer:
         self.base_models[model_key] = {'xgb': final_xgb, 'lgbm': final_lgbm}
         total_time = time.time() - t_slice_start
         print(f"  [{model_key}] Slice total: {total_time:.1f}s  mean OOF AUC={mean_oof_auc:.4f}")
+
+        # Store OOF metrics for inspection after training
+        if not hasattr(self, 'oof_metrics'):
+            self.oof_metrics = {}
+        self.oof_metrics[model_key] = {
+            'oof_auc': mean_oof_auc,
+            'n_samples': len(X),
+            'breach_rate': float(y.mean()),
+        }
         return mean_oof_auc
 
     # ------------------------------------------------------------------
@@ -466,6 +475,7 @@ class ContractModelTrainer:
             'version': 'contract_v1',
             'use_gpu': self.use_gpu,
             'lgbm_available': LGBM_AVAILABLE,
+            'oof_metrics': getattr(self, 'oof_metrics', {}),
         }
         joblib.dump(data, filename)
         print(f"\nSaved contract model to {filename}")
