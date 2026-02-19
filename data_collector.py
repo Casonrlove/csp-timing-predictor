@@ -774,15 +774,16 @@ class CSPDataCollector:
 
         Args:
             forward_days: Days to hold CSP (default 35).
-            delta_buckets: List of target deltas. Defaults to 9 standard buckets.
+            delta_buckets: List of target deltas. Defaults to 5 buckets spanning
+                0.10–0.50 in 0.10 steps for interpolation coverage across the full chain.
 
         Returns:
-            Expanded DataFrame with ~9x more rows (one per date-delta combination),
+            Expanded DataFrame with ~5x more rows (one per date-delta combination),
             including columns: target_delta, strike_otm_pct, strike_breached,
-            and 7 contract interaction features.
+            and 9 contract interaction features.
         """
         if delta_buckets is None:
-            delta_buckets = [0.20, 0.25, 0.30, 0.35]
+            delta_buckets = [0.10, 0.20, 0.30, 0.40, 0.50]
 
         df = self.data.copy()
 

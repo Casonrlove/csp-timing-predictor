@@ -68,7 +68,7 @@ app.add_middleware(
 class PredictionRequest(BaseModel):
     ticker: str
     min_delta: Optional[float] = 0.10
-    max_delta: Optional[float] = 0.60
+    max_delta: Optional[float] = 0.50
 
 
 class PredictionResponse(BaseModel):
@@ -865,7 +865,7 @@ def predict(request: PredictionRequest):
 
             # Evaluate P(breach) for each contract; used later for EV-based selection
             contract_breach_probs = {}  # {delta: p_breach}
-            delta_buckets = [0.20, 0.25, 0.30, 0.35]
+            delta_buckets = [0.10, 0.20, 0.30, 0.40, 0.50]
 
             for target_delta in delta_buckets:
                 # Delta-to-OTM conversion
@@ -1176,7 +1176,7 @@ def predict(request: PredictionRequest):
                             and opt['spread_pct'] <= 0.20
                             and opt.get('edge_prob') is not None
                             and abs(opt['edge_prob']) >= MIN_EDGE_PROB  # no-trade band for weak edge
-                            and abs(opt.get('delta', 0)) <= 0.4  # cap delta at 0.40
+                            and abs(opt.get('delta', 0)) <= 0.50  # cap delta at 0.50
                             and 20 <= opt.get('dte', 0) <= 50  # 20-50 DTE window
                         ]
                         if ev_candidates:
