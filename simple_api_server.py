@@ -1092,10 +1092,23 @@ def predict(request: PredictionRequest):
                 model_prob = None
 
                 if use_contract_edge:
-                    # Find closest delta bucket from contract model predictions
+                    # Interpolate between the two nearest delta buckets so every
+                    # strike gets a unique model_prob rather than snapping all
+                    # nearby strikes to the same bucket value.
                     breach_probs = collector._contract_breach_probs
-                    closest_delta = min(breach_probs.keys(), key=lambda d: abs(d - market_delta))
-                    model_prob = breach_probs[closest_delta]
+                    sorted_bp = sorted(breach_probs.items())  # [(delta, prob), ...]
+                    if market_delta <= sorted_bp[0][0]:
+                        model_prob = sorted_bp[0][1]
+                    elif market_delta >= sorted_bp[-1][0]:
+                        model_prob = sorted_bp[-1][1]
+                    else:
+                        for i in range(len(sorted_bp) - 1):
+                            d0, p0 = sorted_bp[i]
+                            d1, p1 = sorted_bp[i + 1]
+                            if d0 <= market_delta <= d1:
+                                t = (market_delta - d0) / (d1 - d0)
+                                model_prob = p0 + t * (p1 - p0)
+                                break
 
                 if model_prob is None:
                     option['market_delta'] = round(market_delta, 3)
