@@ -143,13 +143,15 @@ def contract_aware_time_split(
     return splits
 
 
-# 7 contract interaction feature names (must match data_collector.create_contract_targets)
+# 9 contract interaction feature names (must match data_collector.create_contract_targets)
 CONTRACT_FEATURE_COLS = [
     'target_delta',
+    'strike_otm_pct',           # raw OTM distance
     'delta_x_vol',
     'delta_x_vix',
     'delta_x_iv_rank',
     'delta_squared',
     'delta_x_rsi',
     'strike_otm_x_atr',
+    'delta_x_vol_momentum',     # delta × Vol_5D_vs_20D (risk amplifier when vol is rising)
 ]

@@ -132,6 +132,7 @@ CONTRACT_MARKET_FEATURE_COLS = None
 CONTRACT_CONTRACT_FEATURE_COLS = None
 CONTRACT_VIX_BOUNDARY = 18.0
 CONTRACT_FORWARD_DAYS = 35
+CONTRACT_BASE_RATES: dict = {}   # per-model-key historical loss rates from training
 MIN_EDGE_PP = 1.0
 MIN_EDGE_PROB = MIN_EDGE_PP / 100.0
 
@@ -168,6 +169,9 @@ if os.path.exists(contract_path):
             FEATURE_NAMES = CONTRACT_MARKET_FEATURE_COLS  # For prepare_inference_features
             CONTRACT_MODE = True
             MODEL_PATH = contract_path
+            # Load per-regime historical loss rates for base-rate-relative CSP scoring
+            oof = contract_data.get('oof_metrics', {})
+            CONTRACT_BASE_RATES = {k: v['breach_rate'] for k, v in oof.items()} if oof else {}
             n_cal = len(CONTRACT_CALIBRATORS)
             print(f"  Contract model loaded: {sorted(CONTRACT_BASE_MODELS.keys())}")
             print(f"  Features: {len(CONTRACT_FEATURE_COLS)} ({len(CONTRACT_MARKET_FEATURE_COLS)} market + {len(CONTRACT_CONTRACT_FEATURE_COLS)} contract)")
@@ -857,10 +861,11 @@ def predict(request: PredictionRequest):
             rsi_val = _mfeat('RSI', 50.0)
             atr_pct_val = _mfeat('ATR_Pct', 1.0)
             regime_val = _mfeat('Regime_Trend', 1.0)
+            vol_5d_20d_val = max(min(_mfeat('Vol_5D_vs_20D', 1.0), 3.0), 0.3)
 
             # Evaluate P(breach) for each contract; used later for EV-based selection
             contract_breach_probs = {}  # {delta: p_breach}
-            delta_buckets = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
+            delta_buckets = [0.20, 0.25, 0.30, 0.35]
 
             for target_delta in delta_buckets:
                 # Delta-to-OTM conversion
@@ -870,15 +875,17 @@ def predict(request: PredictionRequest):
                 except Exception:
                     strike_otm = target_delta * 0.30
 
-                # Build 7 contract features
+                # Build 9 contract features
                 contract_feats = {
                     'target_delta': target_delta,
+                    'strike_otm_pct': strike_otm,
                     'delta_x_vol': target_delta * vol_est,
                     'delta_x_vix': target_delta * vix_val / 100.0,
                     'delta_x_iv_rank': target_delta * iv_rank_val / 100.0,
                     'delta_squared': target_delta ** 2,
                     'delta_x_rsi': target_delta * rsi_val / 100.0,
                     'strike_otm_x_atr': strike_otm * atr_pct_val,
+                    'delta_x_vol_momentum': target_delta * vol_5d_20d_val,
                 }
 
                 # Concatenate market features + contract features → 63-dim vector
@@ -920,7 +927,10 @@ def predict(request: PredictionRequest):
             p_breach_ref = contract_breach_probs.get(0.30, 0.20)
             p_safe = 1.0 - p_breach_ref
             p_downside = p_breach_ref
-            prediction = int(p_safe >= 0.5)
+            # Use historical loss rate as threshold (not 0.50).
+            # With correct target (expiry + 2x stop), loss rate ~30% — never near 50%.
+            _base_rate = CONTRACT_BASE_RATES.get(model_key, 0.30)
+            prediction = int(p_breach_ref < _base_rate)
             model_type = f"Contract V1 ({group}/{vix_regime})"
 
             # Store breach probs on collector for later use in options EV
@@ -1009,7 +1019,17 @@ def predict(request: PredictionRequest):
         p_safe_raw = float(p_safe)
         p_safe = apply_probability_calibration(p_safe_raw)
         p_downside = 1.0 - p_safe
-        csp_score = p_safe - p_downside
+
+        # Base-rate-relative CSP score:
+        #   score = (base_rate - p_breach) / base_rate  →  clipped to [-1, +1]
+        #   > 0 : below-average loss risk (good time to sell)
+        #   = 0 : average conditions
+        #   < 0 : above-average loss risk (avoid or size down)
+        if CONTRACT_MODE and CONTRACT_BASE_RATES:
+            _br = CONTRACT_BASE_RATES.get(locals().get('model_key', ''), 0.30)
+        else:
+            _br = 0.50   # legacy models centered at 0.50
+        csp_score = float(np.clip((_br - p_downside) / max(_br, 0.01), -1.0, 1.0))
 
         # Get current data - try Schwab first for real-time price
         current_data = collector.data.iloc[-1]

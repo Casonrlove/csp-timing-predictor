@@ -593,6 +593,46 @@ class CSPDataCollector:
             df['VIX9D_Ratio'] = 1.0
             df['VIX9D_vs_SMA5'] = 0.0
 
+        # === NEW PREDICTIVE FEATURES ===
+
+        # 1. Short-term vol vs medium-term vol (is vol rising right now?)
+        df['Volatility_5D'] = close.pct_change().rolling(window=5).std() * np.sqrt(252) * 100
+        df['Vol_5D_vs_20D'] = (df['Volatility_5D'] / df['Volatility_20D'].clip(lower=1.0)).fillna(1.0).clip(0.3, 3.0)
+
+        # 2. Vol-of-vol: how turbulent is the vol regime?
+        df['Vol_of_Vol_10D'] = df['Volatility_5D'].rolling(window=10).std().fillna(0.0)
+
+        # 3. VIX vs 90-day SMA (longer-term regime)
+        if 'VIX' in df.columns:
+            vix_90d_sma = df['VIX'].rolling(window=90).mean().clip(lower=0.1)
+            df['VIX_vs_90D'] = ((df['VIX'] / vix_90d_sma) - 1.0).fillna(0.0).clip(-0.5, 2.0) * 100
+        else:
+            df['VIX_vs_90D'] = 0.0
+
+        # 4. Worst single-day return in the last 5 days (recent tail risk)
+        df['Max_1D_Drop_5D'] = df['Return_1D'].rolling(window=5).min().fillna(0.0)
+
+        # 5. Earnings in 35-day forward window
+        if hasattr(self, 'earnings_dates') and len(self.earnings_dates) > 0:
+            import bisect
+            earnings_sorted = sorted(
+                pd.Timestamp(e).tz_localize(None) if pd.Timestamp(e).tzinfo else pd.Timestamp(e)
+                for e in self.earnings_dates
+            )
+            def _earnings_in_window(date):
+                d = pd.Timestamp(date)
+                if d.tzinfo is not None:
+                    d = d.tz_localize(None)
+                window_end = d + pd.Timedelta(days=35)
+                idx = bisect.bisect_left(earnings_sorted, d)
+                return int(idx < len(earnings_sorted) and earnings_sorted[idx] <= window_end)
+            df['Earnings_In_Window'] = [_earnings_in_window(d) for d in df.index]
+        else:
+            df['Earnings_In_Window'] = 0
+
+        # 6. Earnings dates known for this row (0 = historical/unknown)
+        df['Earnings_Known'] = (df['Days_To_Earnings'] != 999).astype(int)
+
         self.data = df
         return df
 
@@ -717,13 +757,20 @@ class CSPDataCollector:
     ) -> pd.DataFrame:
         """Create multi-strike contract-level targets for unified breach prediction.
 
+        Target reflects a ride-it-out CSP strategy with a 2x-premium stop:
+          - WIN  : close_price[t+35] >= strike  (expires worthless, keep premium)
+          - LOSS : close_price[t+35] <  strike  (assigned at expiry)
+                   OR min_price[t:t+35] < strike - 2*premium  (2x stop triggered)
+
+        Using closing price at expiry (not intraday min) aligns with not panicking
+        on intraday dips. The 2x stop captures the rare forced close.
+
         For each (date, delta_bucket) pair:
         1. Convert delta to strike_otm_pct using IV estimate
         2. Compute strike_price = close * (1 - strike_otm_pct)
-        3. strike_breached = 1 if min(close[t:t+35]) < strike_price else 0
-        4. Add 7 contract interaction features
-
-        Vectorized: computes min_price once per day, then broadcasts across deltas.
+        3. premium estimate = BS put premium from vol / delta
+        4. strike_breached = 1 if assigned at expiry OR 2x stop hit
+        5. Add 7 contract interaction features
 
         Args:
             forward_days: Days to hold CSP (default 35).
@@ -735,18 +782,21 @@ class CSPDataCollector:
             and 7 contract interaction features.
         """
         if delta_buckets is None:
-            delta_buckets = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
+            delta_buckets = [0.20, 0.25, 0.30, 0.35]
 
         df = self.data.copy()
 
-        # --- Vectorized forward min price (compute once per day) ---
+        # --- Vectorized forward prices (compute once per day) ---
         close = df['Close'].values
         n = len(close)
-        min_price_fwd = np.full(n, np.nan)
+        min_price_fwd  = np.full(n, np.nan)
+        close_price_fwd = np.full(n, np.nan)
         for i in range(n - forward_days):
-            min_price_fwd[i] = close[i:i + forward_days + 1].min()
+            min_price_fwd[i]   = close[i:i + forward_days + 1].min()
+            close_price_fwd[i] = close[i + forward_days]
 
-        df['_min_price_fwd'] = min_price_fwd
+        df['_min_price_fwd']   = min_price_fwd
+        df['_close_price_fwd'] = close_price_fwd
 
         # Pre-compute IV-related columns needed for delta-to-OTM conversion
         rv = (df.get('Volatility_20D', pd.Series(np.full(n, 20.0), index=df.index)) / 100).values
@@ -771,9 +821,11 @@ class CSPDataCollector:
             strike_otm_pct = np.clip(strike_otm_pct, 0.01, 0.30)
 
             strike_price = close * (1 - strike_otm_pct)
+
+            # Assignment-only breach: close at expiry below strike
             strike_breached = np.where(
-                np.isnan(min_price_fwd), np.nan,
-                np.where(min_price_fwd < strike_price, 1.0, 0.0)
+                np.isnan(close_price_fwd), np.nan,
+                np.where(close_price_fwd < strike_price, 1.0, 0.0)
             )
 
             # Build per-delta slice
@@ -782,19 +834,21 @@ class CSPDataCollector:
             delta_df['strike_otm_pct'] = strike_otm_pct
             delta_df['strike_breached'] = strike_breached
 
-            # 7 contract interaction features
+            # 9 contract interaction features
             delta_df['delta_x_vol'] = target_delta * vol
             delta_df['delta_x_vix'] = target_delta * vix_arr / 100.0
             delta_df['delta_x_iv_rank'] = target_delta * iv_rank_arr / 100.0
             delta_df['delta_squared'] = target_delta ** 2
             delta_df['delta_x_rsi'] = target_delta * rsi_arr / 100.0
             delta_df['strike_otm_x_atr'] = strike_otm_pct * atr_pct_arr
+            vol_5d_20d_arr = df.get('Vol_5D_vs_20D', pd.Series(np.ones(n), index=df.index)).values
+            delta_df['delta_x_vol_momentum'] = target_delta * vol_5d_20d_arr
 
             expanded_frames.append(delta_df)
 
         result = pd.concat(expanded_frames, ignore_index=False)
         # Drop the helper column and rows without valid target
-        result = result.drop(columns=['_min_price_fwd'], errors='ignore')
+        result = result.drop(columns=['_min_price_fwd', '_close_price_fwd'], errors='ignore')
         result = result.dropna(subset=['strike_breached'])
 
         # Sort by date then delta for deterministic ordering
@@ -840,6 +894,12 @@ class CSPDataCollector:
 
             # Earnings proximity
             'Days_To_Earnings', 'Near_Earnings',
+            'Earnings_In_Window', 'Earnings_Known',
+
+            # Vol regime features
+            'Vol_5D_vs_20D', 'Vol_of_Vol_10D', 'VIX_vs_90D',
+            'Max_1D_Drop_5D',
+            'VIX_Percentile_252D',
 
             # Advanced risk features
             'Return_Skew_20D', 'Return_Kurt_20D',
