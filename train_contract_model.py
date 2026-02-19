@@ -484,7 +484,12 @@ class ContractModelTrainer:
         # Store metrics for server (breach_rate used for base-rate-relative CSP scoring)
         if not hasattr(self, 'oof_metrics'):
             self.oof_metrics = {}
-        breach_rate = float(df_holdout['target'].mean()) if holdout_ok else float(y.mean())
+        # Use OOF breach rate to match the OOF-fitted calibrator's output center.
+        # Using the holdout breach rate would create a base-rate mismatch: the
+        # calibrator outputs probabilities ~= OOF rate (~21%), but the score
+        # formula would compare them against the holdout rate (often 4-18%),
+        # driving routine predictions to -100.
+        breach_rate = float(y[oof_cal_indices].mean())
         self.oof_metrics[model_key] = {
             'oof_auc':    mean_oof_auc,
             'n_samples':  len(X),
