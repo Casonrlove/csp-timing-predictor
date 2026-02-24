@@ -716,6 +716,65 @@ async def get_chart_data(ticker: str, range: int = 22):
 
 
 
+@app.get("/earnings/{ticker}")
+async def get_earnings_data(ticker: str):
+    """Return quarterly EPS history and TTM EPS for charting.
+
+    Merges annual EPS (as TTM proxies) with quarterly-derived TTM EPS
+    so the chart has enough data points across a 6-month view.
+    """
+    import yfinance as yf
+    import pandas as pd
+
+    ticker = ticker.upper()
+    try:
+        stock = yf.Ticker(ticker)
+
+        # --- Quarterly TTM EPS (rolling 4-quarter sum) ---
+        qi = stock.quarterly_income_stmt
+        ttm_points: dict[str, float] = {}  # date_str -> ttm_eps
+
+        if qi is not None and "Diluted EPS" in qi.index:
+            eps_raw = qi.loc["Diluted EPS"].sort_index()
+            eps = pd.to_numeric(eps_raw, errors="coerce").dropna().sort_index()
+            if len(eps) >= 4:
+                ttm = eps.rolling(4).sum().dropna()
+                for dt, v in ttm.items():
+                    ttm_points[dt.strftime("%Y-%m-%d")] = round(float(v), 4)
+
+        # --- Annual EPS (each annual figure IS the TTM at fiscal year-end) ---
+        ai = stock.income_stmt
+        if ai is not None and "Diluted EPS" in ai.index:
+            ann_raw = ai.loc["Diluted EPS"].sort_index()
+            ann = pd.to_numeric(ann_raw, errors="coerce").dropna().sort_index()
+            for dt, v in ann.items():
+                key = dt.strftime("%Y-%m-%d")
+                if key not in ttm_points:  # quarterly takes priority
+                    ttm_points[key] = round(float(v), 4)
+
+        if not ttm_points:
+            return {"ticker": ticker, "ttm_eps": []}
+
+        ttm_list = sorted(
+            [{"date": d, "ttm_eps": v} for d, v in ttm_points.items()],
+            key=lambda x: x["date"],
+        )
+
+        # Compute YoY growth where we have data ~1 year apart
+        for i, item in enumerate(ttm_list):
+            prev = [t for t in ttm_list[:i] if t["date"] < item["date"]]
+            ago = prev[-1] if prev else None
+            if ago and ago["ttm_eps"] != 0:
+                item["yoy_growth"] = round(
+                    (item["ttm_eps"] - ago["ttm_eps"]) / abs(ago["ttm_eps"]), 4
+                )
+
+        return {"ticker": ticker, "ttm_eps": ttm_list}
+    except Exception as e:
+        print(f"Earnings fetch failed for {ticker}: {e}")
+        return {"ticker": ticker, "ttm_eps": []}
+
+
 @app.get("/token/status")
 def token_status():
     """Check Schwab token expiration status"""
