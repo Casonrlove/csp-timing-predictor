@@ -1777,22 +1777,41 @@
                         ...(epsVisible && epsData && epsData.ttm_eps && epsData.ttm_eps.length >= 1 ? (() => {
                             const chartStartTs = candleData.length ? candleData[0].x : 0;
                             const chartEndTs   = candleData.length ? candleData[candleData.length - 1].x : Infinity;
-                            // Find the most recent TTM EPS that's on or before the chart end
                             const sorted = epsData.ttm_eps.slice().sort((a, b) => a.date.localeCompare(b.date));
-                            const epsPoints = [];
-                            // For step-function: each EPS holds until the next report
-                            for (let i = 0; i < sorted.length; i++) {
-                                const ts = toTs(sorted[i].date);
-                                const nextTs = i + 1 < sorted.length ? toTs(sorted[i + 1].date) : chartEndTs + 86400000;
-                                // Include if this EPS segment overlaps the visible chart range
-                                const segStart = ts;
-                                const segEnd = nextTs - 86400000;
-                                if (segEnd >= chartStartTs && segStart <= chartEndTs) {
-                                    epsPoints.push({ x: Math.max(segStart, chartStartTs), y: sorted[i].ttm_eps });
-                                    epsPoints.push({ x: Math.min(segEnd, chartEndTs), y: sorted[i].ttm_eps });
-                                }
+
+                            // Build EPS anchors with timestamps; extrapolate forward using last growth rate
+                            const epsWithTs = sorted.map(s => ({ ts: toTs(s.date), eps: s.ttm_eps }));
+                            if (epsWithTs.length >= 2 && chartEndTs > epsWithTs[epsWithTs.length - 1].ts) {
+                                const last = epsWithTs[epsWithTs.length - 1];
+                                const prev = epsWithTs[epsWithTs.length - 2];
+                                const rate = (last.eps - prev.eps) / (last.ts - prev.ts);
+                                epsWithTs.push({ ts: chartEndTs, eps: last.eps + rate * (chartEndTs - last.ts) });
+                            } else if (epsWithTs.length === 1 && chartEndTs > epsWithTs[0].ts) {
+                                epsWithTs.push({ ts: chartEndTs, eps: epsWithTs[0].eps });
                             }
-                            console.log('EPS overlay:', { epsVisible, epsPoints, chartStartTs, chartEndTs, sorted: sorted.map(s => s.date + '=' + s.ttm_eps) });
+
+                            // Interpolate a value for each candle date so the line shows growth
+                            function interpEps(t) {
+                                if (t <= epsWithTs[0].ts) {
+                                    if (epsWithTs.length >= 2) {
+                                        const rate = (epsWithTs[1].eps - epsWithTs[0].eps) / (epsWithTs[1].ts - epsWithTs[0].ts);
+                                        return epsWithTs[0].eps + rate * (t - epsWithTs[0].ts);
+                                    }
+                                    return epsWithTs[0].eps;
+                                }
+                                if (t >= epsWithTs[epsWithTs.length - 1].ts) {
+                                    return epsWithTs[epsWithTs.length - 1].eps;
+                                }
+                                for (let i = 0; i < epsWithTs.length - 1; i++) {
+                                    if (t >= epsWithTs[i].ts && t < epsWithTs[i + 1].ts) {
+                                        const frac = (t - epsWithTs[i].ts) / (epsWithTs[i + 1].ts - epsWithTs[i].ts);
+                                        return epsWithTs[i].eps + frac * (epsWithTs[i + 1].eps - epsWithTs[i].eps);
+                                    }
+                                }
+                                return epsWithTs[epsWithTs.length - 1].eps;
+                            }
+                            const epsPoints = candleData.map(cd => ({ x: cd.x, y: interpEps(cd.x) }));
+
                             return [{
                                 type: 'line',
                                 label: 'TTM EPS',
@@ -1800,9 +1819,7 @@
                                 borderColor: '#e879f9',
                                 backgroundColor: 'rgba(232,121,249,0.08)',
                                 borderWidth: 2.5,
-                                pointRadius: 3,
-                                pointBackgroundColor: '#e879f9',
-                                pointBorderColor: '#e879f9',
+                                pointRadius: 0,
                                 borderDash: [],
                                 yAxisID: 'yEps',
                                 fill: false,
