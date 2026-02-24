@@ -1927,9 +1927,8 @@
                 const histData  = history.map((d, i) => histogram[i] != null ? { x: toTs(d.date), y: histogram[i] } : null).filter(Boolean);
                 const histColors = histData.map(pt => pt.y >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
 
-                // Match the price chart's full X range (candles + projection)
-                const priceXMin = candleData.length ? candleData[0].x : undefined;
-                const priceXMax = projLine.length ? projLine[projLine.length - 1].x : (candleData.length ? candleData[candleData.length - 1].x : undefined);
+                // Invisible padding dataset to force timeseries scale to include projection timestamps
+                const macdPadding = projLine.map(pt => ({ x: pt.x, y: null }));
 
                 macdChartInstance = new Chart(macdCanvas.getContext('2d'), {
                     type: 'bar',
@@ -1962,6 +1961,14 @@
                                 borderWidth: 1.5,
                                 pointRadius: 0,
                             },
+                            {
+                                type: 'line',
+                                label: '_padding',
+                                data: macdPadding,
+                                borderWidth: 0,
+                                pointRadius: 0,
+                                showLine: false,
+                            },
                         ]
                     },
                     options: {
@@ -1976,8 +1983,6 @@
                         scales: {
                             x: {
                                 type: 'timeseries',
-                                min: priceXMin,
-                                max: priceXMax,
                                 time: { displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'MMM yy' } },
                                 grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
                                 ticks: { color:'#718096', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 }
