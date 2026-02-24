@@ -1271,7 +1271,7 @@
                                 <button onclick="setChartRange('${data.ticker}', 756)" class="range-btn" data-range="756" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">3Y</button>
                                 <button onclick="setChartRange('${data.ticker}', 1260)" class="range-btn" data-range="1260" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">5Y</button>
                                 <span style="border-left: 1px solid var(--border-color); margin: 0 4px;"></span>
-                                <button id="epsToggle_${data.ticker}" onclick="toggleEpsOverlay('${data.ticker}')" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">TTM EPS</button>
+                                <button id="epsToggle_${data.ticker}" onclick="toggleEpsOverlay('${data.ticker}')" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-selected-bg); border: 1px solid var(--tab-selected-border); color: var(--tab-selected-text); border-radius: 4px; cursor: pointer;">TTM EPS</button>
                             </div>
                         </div>
                         <div style="position: relative; height: 520px;">
@@ -1293,7 +1293,7 @@
                             <span style="color: rgba(248, 81, 73, 0.5);">▓ Risk Zone</span>
                             <span style="color: #f97316;">━ MACD</span>
                             <span style="color: #818cf8;">━ Signal</span>
-                            <span id="epsLegend_${data.ticker}" style="color: #e879f9; display: none;">● TTM EPS (right axis)</span>
+                            <span id="epsLegend_${data.ticker}" style="color: #e879f9;">● TTM EPS (right axis)</span>
                         </div>
                     </div>
                     ` : ''}
@@ -1507,7 +1507,7 @@
         let chartFullData = null;  // Store full data for range switching
         let currentChartRange = 5;  // Default to 1 week
         let epsData = null;        // Cached TTM EPS data from server
-        let epsVisible = false;    // Whether TTM EPS overlay is shown
+        let epsVisible = true;     // Whether TTM EPS overlay is shown
         let currentBarMs = 0;      // Bar spacing in ms for live tick aggregation
 
         function computeSMA(data, period) {
@@ -1609,7 +1609,17 @@
         async function initPriceChart(data, ticker) {
             // Reset EPS state for new ticker
             epsData = null;
-            epsVisible = false;
+            epsVisible = true;
+            // Fetch EPS data before rendering so overlay shows on first load
+            try {
+                const apiUrl = getApiUrl();
+                const epsResp = await fetch(`${apiUrl}/earnings/${ticker}`, {
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                });
+                if (epsResp.ok) epsData = await epsResp.json();
+            } catch (e) {
+                console.warn('EPS fetch failed:', e);
+            }
             try {
                 const apiUrl = getApiUrl();
                 const resp = await fetch(`${apiUrl}/chart/${ticker}?range=5`, {
