@@ -637,7 +637,7 @@ async def stream_ticker(
 async def get_chart_data(ticker: str, range: int = 22):
     """Return OHLC candles for charting.
 
-    range: 5=1W (30-min bars via Schwab), 22=1M, 66=3M, 132=6M (daily bars).
+    range: 5=1W (30-min bars), 22=1M, 66=3M, 132=6M, 252=1Y, 756=3Y, 1260=5Y.
     Falls back to collector daily data when Schwab is unavailable.
     """
     ticker = ticker.upper()
@@ -663,10 +663,28 @@ async def get_chart_data(ticker: str, range: int = 22):
                     frequency_type="daily", frequency=1,
                 )
                 fmt = "%Y-%m-%d"
-            else:
+            elif range <= 132:
                 raw = get_price_history(
                     ticker, period_type="month", period=6,
                     frequency_type="daily", frequency=1,
+                )
+                fmt = "%Y-%m-%d"
+            elif range <= 252:
+                raw = get_price_history(
+                    ticker, period_type="year", period=1,
+                    frequency_type="daily", frequency=1,
+                )
+                fmt = "%Y-%m-%d"
+            elif range <= 756:
+                raw = get_price_history(
+                    ticker, period_type="year", period=3,
+                    frequency_type="weekly", frequency=1,
+                )
+                fmt = "%Y-%m-%d"
+            else:
+                raw = get_price_history(
+                    ticker, period_type="year", period=5,
+                    frequency_type="weekly", frequency=1,
                 )
                 fmt = "%Y-%m-%d"
 
@@ -685,13 +703,14 @@ async def get_chart_data(ticker: str, range: int = 22):
             return {
                 "ticker": ticker,
                 "candles": candles,
-                "frequency": "intraday" if range <= 22 else "daily",
+                "frequency": "intraday" if range <= 22 else ("weekly" if range > 252 else "daily"),
                 "range": range,
             }
 
         # Schwab unavailable — serve collector daily data
+        fallback_period = "5y" if range > 756 else ("3y" if range > 252 else ("1y" if range > 132 else "6mo"))
         collector = CSPDataCollector(ticker)
-        collector.fetch_data(period="6mo")
+        collector.fetch_data(period=fallback_period)
         hist_df = collector.data.tail(range)
         candles = []
         for idx, row in hist_df.iterrows():
