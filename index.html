@@ -1505,6 +1505,7 @@
         let currentChartRange = 5;  // Default to 1 week
         let epsData = null;        // Cached TTM EPS data from server
         let epsVisible = false;    // Whether TTM EPS overlay is shown
+        let currentBarMs = 0;      // Bar spacing in ms for live tick aggregation
 
         function computeSMA(data, period) {
             const out = Array(data.length).fill(null);
@@ -1615,6 +1616,8 @@
                     const cd = await resp.json();
                     if (cd.candles && cd.candles.length > 0) {
                         renderPriceChart(data, 5, cd.candles);
+                        // Auto-start live stream for intraday chart (1W view)
+                        if (!activeStreams[ticker]) startLiveStream(ticker);
                         return;
                     }
                 }
@@ -1707,6 +1710,7 @@
             const barMs = history.length >= 2
                 ? toTs(history[history.length - 1].date) - toTs(history[history.length - 2].date)
                 : 24 * 60 * 60 * 1000;
+            currentBarMs = barMs;
 
             const currentPrice = data.current_price;
             const safeProb     = data.p_safe;
@@ -2263,6 +2267,60 @@
                 badge.style.background = 'rgba(34, 197, 94, 0.85)';
                 badge.style.animation  = 'pulse 2s infinite';
                 badge.title = 'Click to stop stream';
+            }
+
+            // --- Update chart candle live ---
+            if (priceChartInstance && currentBarMs > 0) {
+                const candles = priceChartInstance.data.datasets[0].data;
+                if (candles.length > 0) {
+                    const last = candles[candles.length - 1];
+                    const tickTs = Date.now();
+                    const barEnd = last.x + currentBarMs;
+
+                    if (tickTs < barEnd) {
+                        // Same bar — update in place
+                        last.c = data.price;
+                        if (data.price > last.h) last.h = data.price;
+                        if (data.price < last.l) last.l = data.price;
+                    } else {
+                        // New bar — push a new candle
+                        const newBarTs = last.x + currentBarMs;
+                        candles.push({ x: newBarTs, o: data.price, h: data.price, l: data.price, c: data.price });
+                    }
+
+                    // Update MACD last point if macdChartInstance exists
+                    if (macdChartInstance) {
+                        const prices = candles.map(c => c.c);
+                        const ema12 = computeEMA(prices, 12);
+                        const ema26 = computeEMA(prices, 26);
+                        const macdLine = ema12.map((v, i) => v !== null && ema26[i] !== null ? v - ema26[i] : null);
+                        const signal = computeEMA(macdLine.filter(v => v !== null), 9);
+
+                        // Datasets: [0]=Histogram, [1]=MACD, [2]=Signal
+                        const macdDs = macdChartInstance.data.datasets;
+                        const lastIdx = prices.length - 1;
+                        const macdVal = macdLine[lastIdx];
+                        const nonNull = macdLine.reduce((c, v, i) => { if (v !== null) c.push(i); return c; }, []);
+                        const sigIdx = nonNull.length - 1;
+                        const sigVal = sigIdx >= 0 && sigIdx < signal.length ? signal[sigIdx] : null;
+                        const histVal = macdVal !== null && sigVal !== null ? macdVal - sigVal : null;
+
+                        if (macdDs[1] && macdDs[1].data.length > 0) {
+                            macdDs[1].data[macdDs[1].data.length - 1].y = macdVal;
+                        }
+                        if (macdDs[2] && macdDs[2].data.length > 0) {
+                            macdDs[2].data[macdDs[2].data.length - 1].y = sigVal;
+                        }
+                        if (macdDs[0] && macdDs[0].data.length > 0) {
+                            const lp = macdDs[0].data[macdDs[0].data.length - 1];
+                            lp.y = histVal;
+                            lp.backgroundColor = histVal >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)';
+                        }
+                        macdChartInstance.update('none');
+                    }
+
+                    priceChartInstance.update('none');
+                }
             }
         }
 
