@@ -678,13 +678,13 @@ async def get_chart_data(ticker: str, range: int = 22):
             elif range <= 756:
                 raw = get_price_history(
                     ticker, period_type="year", period=3,
-                    frequency_type="weekly", frequency=1,
+                    frequency_type="daily", frequency=1,
                 )
                 fmt = "%Y-%m-%d"
             else:
                 raw = get_price_history(
                     ticker, period_type="year", period=5,
-                    frequency_type="weekly", frequency=1,
+                    frequency_type="daily", frequency=1,
                 )
                 fmt = "%Y-%m-%d"
 
@@ -703,7 +703,7 @@ async def get_chart_data(ticker: str, range: int = 22):
             return {
                 "ticker": ticker,
                 "candles": candles,
-                "frequency": "intraday" if range <= 22 else ("weekly" if range > 252 else "daily"),
+                "frequency": "intraday" if range <= 22 else "daily",
                 "range": range,
             }
 

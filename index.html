@@ -1668,8 +1668,10 @@
                 if (resp.ok) {
                     const cd = await resp.json();
                     if (cd.candles && cd.candles.length > 0) {
-                        // 1M: aggregate 30-min → 6hr
-                        const candles = days === 22 ? aggregateCandles(cd.candles, 12) : cd.candles;
+                        // 1M: aggregate 30-min → 6hr; 3Y/5Y: aggregate daily → weekly
+                        const candles = days === 22 ? aggregateCandles(cd.candles, 12)
+                            : days >= 756 ? aggregateCandles(cd.candles, 5)
+                            : cd.candles;
                         renderPriceChart(chartFullData, days, candles);
                         return;
                     }
@@ -1940,8 +1942,10 @@
                 const histData  = history.map((d, i) => histogram[i] != null ? { x: toTs(d.date), y: histogram[i] } : null).filter(Boolean);
                 const histColors = histData.map(pt => pt.y >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
 
-                // Invisible padding dataset to force timeseries scale to include projection timestamps
-                const macdPadding = projLine.map(pt => ({ x: pt.x, y: null }));
+                // Invisible padding: all candle timestamps + projection timestamps
+                // so the timeseries scale matches the price chart exactly
+                const macdPadding = candleData.map(cd => ({ x: cd.x, y: null }))
+                    .concat(projLine.map(pt => ({ x: pt.x, y: null })));
 
                 macdChartInstance = new Chart(macdCanvas.getContext('2d'), {
                     type: 'bar',
