@@ -1758,20 +1758,23 @@
                         { type:'line', label:'EMA 9',  data: maLine(ema9vals),   borderColor:'#a3e635', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
                         { type:'line', label:'SMA 50',  data: maLine(sma50vals),  borderColor:'#d29922', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[4,3] },
                         { type:'line', label:'SMA 200', data: maLine(sma200vals), borderColor:'#a371f7', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[6,3] },
-                        // TTM EPS overlay (secondary Y-axis) — step function using most recent reported value
+                        // TTM EPS overlay (secondary Y-axis) — interpolate between report dates, flat after last report
                         ...(epsVisible && epsData && epsData.ttm_eps && epsData.ttm_eps.length >= 1 ? (() => {
                             const sorted = epsData.ttm_eps.slice().sort((a, b) => a.date.localeCompare(b.date));
                             const epsWithTs = sorted.map(s => ({ ts: toTs(s.date), eps: s.ttm_eps }));
 
-                            // Step function: for each candle, use the most recent known TTM EPS
-                            function stepEps(t) {
-                                let val = null;
-                                for (let i = epsWithTs.length - 1; i >= 0; i--) {
-                                    if (t >= epsWithTs[i].ts) { val = epsWithTs[i].eps; break; }
+                            function interpEps(t) {
+                                if (t < epsWithTs[0].ts) return null;
+                                if (t >= epsWithTs[epsWithTs.length - 1].ts) return epsWithTs[epsWithTs.length - 1].eps;
+                                for (let i = 0; i < epsWithTs.length - 1; i++) {
+                                    if (t >= epsWithTs[i].ts && t < epsWithTs[i + 1].ts) {
+                                        const frac = (t - epsWithTs[i].ts) / (epsWithTs[i + 1].ts - epsWithTs[i].ts);
+                                        return epsWithTs[i].eps + frac * (epsWithTs[i + 1].eps - epsWithTs[i].eps);
+                                    }
                                 }
-                                return val;
+                                return epsWithTs[epsWithTs.length - 1].eps;
                             }
-                            const epsPoints = candleData.map(cd => ({ x: cd.x, y: stepEps(cd.x) }));
+                            const epsPoints = candleData.map(cd => ({ x: cd.x, y: interpEps(cd.x) }));
 
                             return [{
                                 type: 'line',
@@ -1781,7 +1784,6 @@
                                 backgroundColor: 'rgba(232,121,249,0.08)',
                                 borderWidth: 2.5,
                                 pointRadius: 0,
-                                stepped: 'before',
                                 yAxisID: 'yEps',
                                 fill: false,
                                 spanGaps: true,
