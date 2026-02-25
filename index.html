@@ -1825,7 +1825,7 @@
                         x: {
                             type: 'timeseries',
                             time: {
-                                displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'MMM yyyy', quarter:'MMM yyyy', year:'yyyy' }
+                                displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'M/yy', quarter:'M/yy', year:'yyyy' }
                             },
                             grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
                             ticks: { display: false }
@@ -1925,7 +1925,7 @@
                         scales: {
                             x: {
                                 type: 'timeseries',
-                                time: { displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'MMM yyyy', quarter:'MMM yyyy', year:'yyyy' } },
+                                time: { displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'M/yy', quarter:'M/yy', year:'yyyy' } },
                                 grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
                                 ticks: { color:'#718096', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 },
                                 afterBuildTicks(axis) {
