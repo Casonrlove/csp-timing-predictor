@@ -1279,7 +1279,7 @@
                             <div id="chartTooltip_${data.ticker}" style="position: absolute; top: 10px; right: 10px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 10; min-width: 120px;">
                             </div>
                         </div>
-                        <div style="position: relative; height: 160px; margin-top: 4px;">
+                        <div style="position: relative; height: 160px; margin-top: 0;">
                             <canvas id="macdChart_${data.ticker}"></canvas>
                         </div>
                         <div style="margin-top: 6px; display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.75rem; color: #8b949e;">
@@ -1834,7 +1834,7 @@
                                 displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'MMM yy' }
                             },
                             grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
-                            ticks: { color:'#718096', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 }
+                            ticks: { display: false }
                         },
                         y: {
                             position: 'left',
@@ -1866,7 +1866,7 @@
                 }
             });
 
-            // MACD panel — sync X-axis with price chart (including projection area)
+            // MACD panel — copy tick positions from price chart for exact gridline alignment
             const macdCanvas = document.getElementById(`macdChart_${data.ticker}`);
             if (macdCanvas) {
                 const { macd, signal: sig, histogram } = computeMACD(prices);
@@ -1933,7 +1933,13 @@
                                 type: 'timeseries',
                                 time: { displayFormats: { minute:'HH:mm', hour:'HH:mm', day:'MMM d', week:'MMM d', month:'MMM yy' } },
                                 grid: { color:'rgba(255,255,255,0.04)', drawBorder:false },
-                                ticks: { color:'#718096', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 }
+                                ticks: { color:'#718096', maxTicksLimit: isIntraday ? 8 : 10, maxRotation:0 },
+                                afterBuildTicks(axis) {
+                                    // Copy tick positions from price chart for exact gridline alignment
+                                    if (priceChartInstance && priceChartInstance.scales && priceChartInstance.scales.x) {
+                                        axis.ticks = priceChartInstance.scales.x.ticks.slice();
+                                    }
+                                }
                             },
                             y: {
                                 position: 'left',
