@@ -1720,40 +1720,10 @@
                 c: d.close,
             }));
 
-            // Projection: 1/5 of chart width in bars, estimated by bar spacing
-            const projBarCount = Math.max(1, Math.round(history.length / 4));
             const barMs = history.length >= 2
                 ? toTs(history[history.length - 1].date) - toTs(history[history.length - 2].date)
                 : 24 * 60 * 60 * 1000;
             currentBarMs = barMs;
-
-            const currentPrice = data.current_price;
-            const safeProb     = data.p_safe;
-            const expRet       = safeProb > 0.5 ? (safeProb - 0.5) * 0.04 : -(0.5 - safeProb) * 0.08;
-            const projectedPrice = currentPrice * (1 + expRet);
-            const lookback     = Math.min(20, prices.length);
-            const vol          = Math.abs(prices[prices.length - 1] - prices[prices.length - lookback]) / prices[prices.length - lookback];
-            const barVol       = vol / Math.sqrt(lookback) * 1.5;
-            const lastTs       = toTs(history[history.length - 1].date);
-            const projColor    = data.csp_score > 0 ? '#22c55e' : '#ef4444';
-
-            const projLine = [{ x: lastTs, y: currentPrice }];
-            const upBand   = [{ x: lastTs, y: currentPrice }];
-            const loBand   = [{ x: lastTs, y: currentPrice }];
-            for (let i = 1; i <= projBarCount; i++) {
-                const progress = i / projBarCount;
-                const p  = currentPrice + (projectedPrice - currentPrice) * progress;
-                const ts = lastTs + barMs * i;
-                projLine.push({ x: ts, y: p });
-                upBand.push({ x: ts, y: p + currentPrice * barVol * Math.sqrt(i + 1) });
-                loBand.push({ x: ts, y: p - currentPrice * barVol * Math.sqrt(i + 1) });
-            }
-
-            const riskThreshold = currentPrice * 0.95;
-            const riskLine = [
-                { x: lastTs, y: riskThreshold },
-                { x: lastTs + barMs * projBarCount, y: riskThreshold }
-            ];
 
             // EMA + SMA lines computed client-side (work for any candle frequency)
             const ema12vals = computeEMA(prices, 12);
@@ -1788,48 +1758,20 @@
                         { type:'line', label:'EMA 9',  data: maLine(ema9vals),   borderColor:'#a3e635', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
                         { type:'line', label:'SMA 50',  data: maLine(sma50vals),  borderColor:'#d29922', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[4,3] },
                         { type:'line', label:'SMA 200', data: maLine(sma200vals), borderColor:'#a371f7', backgroundColor:'transparent', borderWidth:1.5, pointRadius:0, borderDash:[6,3] },
-                        { type:'line', label:'Projection', data: projLine, borderColor: projColor, backgroundColor:'transparent', borderWidth:2, pointRadius:0, borderDash:[6,4] },
-                        { type:'line', label:'Upper Band', data: upBand,   borderColor:'rgba(34,197,94,0.25)',  backgroundColor:'rgba(34,197,94,0.07)',  fill:'+1', borderWidth:1, pointRadius:0 },
-                        { type:'line', label:'Lower Band', data: loBand,   borderColor:'rgba(239,68,68,0.2)',   backgroundColor:'transparent', borderWidth:1, pointRadius:0 },
-                        { type:'line', label:'-5% Risk',   data: riskLine, borderColor:'rgba(239,68,68,0.65)', backgroundColor:'rgba(239,68,68,0.06)', borderWidth:1.5, pointRadius:0, borderDash:[8,4], fill:'origin' },
-                        // TTM EPS overlay (secondary Y-axis) — only populated when toggle is on
+                        // TTM EPS overlay (secondary Y-axis) — step function using most recent reported value
                         ...(epsVisible && epsData && epsData.ttm_eps && epsData.ttm_eps.length >= 1 ? (() => {
-                            const chartStartTs = candleData.length ? candleData[0].x : 0;
-                            const chartEndTs   = candleData.length ? candleData[candleData.length - 1].x : Infinity;
                             const sorted = epsData.ttm_eps.slice().sort((a, b) => a.date.localeCompare(b.date));
-
-                            // Build EPS anchors with timestamps; extrapolate forward using last growth rate
                             const epsWithTs = sorted.map(s => ({ ts: toTs(s.date), eps: s.ttm_eps }));
-                            if (epsWithTs.length >= 2 && chartEndTs > epsWithTs[epsWithTs.length - 1].ts) {
-                                const last = epsWithTs[epsWithTs.length - 1];
-                                const prev = epsWithTs[epsWithTs.length - 2];
-                                const rate = (last.eps - prev.eps) / (last.ts - prev.ts);
-                                epsWithTs.push({ ts: chartEndTs, eps: last.eps + rate * (chartEndTs - last.ts) });
-                            } else if (epsWithTs.length === 1 && chartEndTs > epsWithTs[0].ts) {
-                                epsWithTs.push({ ts: chartEndTs, eps: epsWithTs[0].eps });
-                            }
 
-                            // Interpolate a value for each candle date so the line shows growth
-                            function interpEps(t) {
-                                if (t <= epsWithTs[0].ts) {
-                                    if (epsWithTs.length >= 2) {
-                                        const rate = (epsWithTs[1].eps - epsWithTs[0].eps) / (epsWithTs[1].ts - epsWithTs[0].ts);
-                                        return epsWithTs[0].eps + rate * (t - epsWithTs[0].ts);
-                                    }
-                                    return epsWithTs[0].eps;
+                            // Step function: for each candle, use the most recent known TTM EPS
+                            function stepEps(t) {
+                                let val = null;
+                                for (let i = epsWithTs.length - 1; i >= 0; i--) {
+                                    if (t >= epsWithTs[i].ts) { val = epsWithTs[i].eps; break; }
                                 }
-                                if (t >= epsWithTs[epsWithTs.length - 1].ts) {
-                                    return epsWithTs[epsWithTs.length - 1].eps;
-                                }
-                                for (let i = 0; i < epsWithTs.length - 1; i++) {
-                                    if (t >= epsWithTs[i].ts && t < epsWithTs[i + 1].ts) {
-                                        const frac = (t - epsWithTs[i].ts) / (epsWithTs[i + 1].ts - epsWithTs[i].ts);
-                                        return epsWithTs[i].eps + frac * (epsWithTs[i + 1].eps - epsWithTs[i].eps);
-                                    }
-                                }
-                                return epsWithTs[epsWithTs.length - 1].eps;
+                                return val;
                             }
-                            const epsPoints = candleData.map(cd => ({ x: cd.x, y: interpEps(cd.x) }));
+                            const epsPoints = candleData.map(cd => ({ x: cd.x, y: stepEps(cd.x) }));
 
                             return [{
                                 type: 'line',
@@ -1839,7 +1781,7 @@
                                 backgroundColor: 'rgba(232,121,249,0.08)',
                                 borderWidth: 2.5,
                                 pointRadius: 0,
-                                borderDash: [],
+                                stepped: 'before',
                                 yAxisID: 'yEps',
                                 fill: false,
                                 spanGaps: true,
@@ -1863,19 +1805,10 @@
                                 if (tm.dataPoints && tm.dataPoints.length) {
                                     const dp = tm.dataPoints[0];
                                     const raw = dp.raw;
-                                    const inProjection = !raw || raw.o === undefined;
                                     let html = `<div style="font-weight:700;color:#e2e8f0;margin-bottom:5px;font-size:0.8rem;">${tm.title?.[0] ?? ''}</div>`;
-                                    if (!inProjection) {
+                                    if (raw && raw.o !== undefined) {
                                         const col = raw.c >= raw.o ? '#22c55e' : '#ef4444';
                                         html += `<div style="color:${col};font-size:0.78rem;">H: $${raw.h.toFixed(2)} &nbsp; L: $${raw.l.toFixed(2)}</div>`;
-                                    } else {
-                                        tm.dataPoints.forEach(p => {
-                                            const lbl = p.dataset.label;
-                                            if ((lbl === 'Upper Band' || lbl === 'Lower Band') && p.parsed?.y != null) {
-                                                const col = lbl === 'Upper Band' ? '#22c55e' : '#ef4444';
-                                                html += `<div style="color:${col};font-size:0.78rem;">${lbl}: $${p.parsed.y.toFixed(2)}</div>`;
-                                            }
-                                        });
                                     }
                                     // Show TTM EPS in tooltip if visible
                                     if (epsVisible) {
@@ -1942,10 +1875,8 @@
                 const histData  = history.map((d, i) => histogram[i] != null ? { x: toTs(d.date), y: histogram[i] } : null).filter(Boolean);
                 const histColors = histData.map(pt => pt.y >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
 
-                // Invisible padding: all candle timestamps + projection timestamps
-                // so the timeseries scale matches the price chart exactly
-                const macdPadding = candleData.map(cd => ({ x: cd.x, y: null }))
-                    .concat(projLine.map(pt => ({ x: pt.x, y: null })));
+                // Invisible padding: all candle timestamps so timeseries scale matches price chart
+                const macdPadding = candleData.map(cd => ({ x: cd.x, y: null }));
 
                 macdChartInstance = new Chart(macdCanvas.getContext('2d'), {
                     type: 'bar',
