@@ -1943,6 +1943,8 @@
                         }
                     }
                 });
+                // Force MACD to re-render now that price chart ticks are finalized
+                macdChartInstance.update('none');
             }
         }
 
