@@ -1270,8 +1270,6 @@
                                 <button onclick="setChartRange('${data.ticker}', 252)" class="range-btn" data-range="252" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">1Y</button>
                                 <button onclick="setChartRange('${data.ticker}', 756)" class="range-btn" data-range="756" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">3Y</button>
                                 <button onclick="setChartRange('${data.ticker}', 1260)" class="range-btn" data-range="1260" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-bg); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer;">5Y</button>
-                                <span style="border-left: 1px solid var(--border-color); margin: 0 4px;"></span>
-                                <button id="epsToggle_${data.ticker}" onclick="toggleEpsOverlay('${data.ticker}')" style="padding: 4px 10px; font-size: 0.75rem; background: var(--tab-selected-bg); border: 1px solid var(--tab-selected-border); color: var(--tab-selected-text); border-radius: 4px; cursor: pointer;">TTM EPS</button>
                             </div>
                         </div>
                         <div style="position: relative; height: 624px;">
@@ -1503,7 +1501,6 @@
         let chartFullData = null;  // Store full data for range switching
         let currentChartRange = 5;  // Default to 1 week
         let epsData = null;        // Cached TTM EPS data from server
-        let epsVisible = true;     // Whether TTM EPS overlay is shown
         let currentBarMs = 0;      // Bar spacing in ms for live tick aggregation
 
         function computeSMA(data, period) {
@@ -1571,41 +1568,9 @@
             return new Date(dateStr + 'T12:00:00Z').getTime();
         }
 
-        async function toggleEpsOverlay(ticker) {
-            epsVisible = !epsVisible;
-            const btn = document.getElementById(`epsToggle_${ticker}`);
-            const legend = document.getElementById(`epsLegend_${ticker}`);
-            if (epsVisible) {
-                btn.style.background = 'var(--tab-selected-bg)';
-                btn.style.borderColor = 'var(--tab-selected-border)';
-                btn.style.color = 'var(--tab-selected-text)';
-                if (legend) legend.style.display = '';
-                // Fetch EPS data if not cached
-                if (!epsData) {
-                    try {
-                        const apiUrl = getApiUrl();
-                        const resp = await fetch(`${apiUrl}/earnings/${ticker}`, {
-                            headers: { 'ngrok-skip-browser-warning': 'true' }
-                        });
-                        if (resp.ok) epsData = await resp.json();
-                    } catch (e) {
-                        console.warn('EPS fetch failed:', e);
-                    }
-                }
-            } else {
-                btn.style.background = 'var(--tab-bg)';
-                btn.style.borderColor = 'var(--border-color)';
-                btn.style.color = 'var(--text-secondary)';
-                if (legend) legend.style.display = 'none';
-            }
-            // Re-render the chart with current range
-            if (chartFullData) setChartRange(ticker, currentChartRange);
-        }
-
         async function initPriceChart(data, ticker) {
             // Reset EPS state for new ticker
             epsData = null;
-            epsVisible = true;
             // Fetch EPS data before rendering so overlay shows on first load
             try {
                 const apiUrl = getApiUrl();
@@ -1751,7 +1716,7 @@
                         { type:'line', label:'EMA 26', data: maLine(ema26vals),  borderColor:'#fb923c', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
                         { type:'line', label:'EMA 9',  data: maLine(ema9vals),   borderColor:'#a3e635', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
                         // TTM EPS overlay (secondary Y-axis) — interpolate between report dates, flat after last report
-                        ...(epsVisible && epsData && epsData.ttm_eps && epsData.ttm_eps.length >= 1 ? (() => {
+                        ...(epsData && epsData.ttm_eps && epsData.ttm_eps.length >= 1 ? (() => {
                             const sorted = epsData.ttm_eps.slice().sort((a, b) => a.date.localeCompare(b.date));
                             const epsWithTs = sorted.map(s => ({ ts: toTs(s.date), eps: s.ttm_eps }));
 
@@ -1806,7 +1771,7 @@
                                         html += `<div style="color:${col};font-size:0.78rem;">H: $${raw.h.toFixed(2)} &nbsp; L: $${raw.l.toFixed(2)}</div>`;
                                     }
                                     // Show TTM EPS in tooltip if visible
-                                    if (epsVisible) {
+                                    if (epsData) {
                                         const epsPt = tm.dataPoints.find(p => p.dataset.label === 'TTM EPS');
                                         if (epsPt && epsPt.parsed?.y != null) {
                                             const epsVal = epsPt.parsed.y;
@@ -1841,7 +1806,7 @@
                             min: Math.min(...history.map(d => d.low ?? d.close)) * 0.99,
                             max: Math.max(...history.map(d => d.high ?? d.close)) * 1.01
                         },
-                        ...(epsVisible ? {
+                        ...(epsData ? {
                             yEps: {
                                 position: 'right',
                                 grid: { drawOnChartArea: false },
