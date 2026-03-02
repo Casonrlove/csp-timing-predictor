@@ -498,6 +498,13 @@
             letter-spacing: 0.03em;
         }
         .td-item[data-ref="true"] .td-ticker { color: var(--text-secondary); }
+
+        tr.row-selected {
+            background: rgba(250, 204, 21, 0.18) !important;
+            outline: 1px solid rgba(250, 204, 21, 0.45);
+            cursor: pointer;
+        }
+        tr.opt-row { cursor: pointer; }
         .td-bucket {
             font-size: 0.72rem;
             color: var(--text-secondary);
@@ -1445,7 +1452,7 @@
                                                     const isITM = opt.strike > data.current_price;
                                                     const rowBg = opt.is_suggested ? 'rgba(128, 90, 213, 0.25)' : isITM ? 'var(--bg-row-itm)' : 'var(--bg-row-otm)';
                                                     return `
-                                                    <tr style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
+                                                    <tr class="opt-row" onclick="this.classList.toggle('row-selected')" style="border-bottom: 1px solid var(--border-color); background: ${rowBg}; ${opt.is_suggested ? 'border-left: 3px solid var(--accent-purple);' : ''}">
                                                         <td style="padding: 6px 8px; color: var(--text-strike); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong>$${opt.strike.toFixed(2)}</strong>${opt.is_suggested ? ' ⭐' : ''}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.bid.toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ask.toFixed(2)}</td>
