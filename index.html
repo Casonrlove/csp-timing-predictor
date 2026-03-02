@@ -1733,8 +1733,6 @@
                             const lastPt = sorted[sorted.length - 1];
                             const lastTs = epsWithTs[epsWithTs.length - 1].ts;
                             const lastEps = lastPt.ttm_eps;
-                            const yoyGrowth = lastPt.yoy_growth ?? 0;
-                            const MS_PER_YEAR = 365.25 * 24 * 3600 * 1000;
 
                             // Solid: interpolate between report dates, null after last report
                             function interpActual(t) {
@@ -1750,12 +1748,25 @@
                                 return lastEps;
                             }
 
-                            // Dashed: project from last report using YoY growth
+                            // Dashed: analyst consensus forward EPS (0y / +1y), interpolated
+                            const fwdAnchors = [{ ts: lastTs, eps: lastEps }];
+                            if (epsData.forward_eps && epsData.forward_eps.length > 0) {
+                                epsData.forward_eps
+                                    .filter(f => new Date(f.date).getTime() > lastTs)
+                                    .sort((a, b) => a.date.localeCompare(b.date))
+                                    .forEach(f => fwdAnchors.push({ ts: new Date(f.date).getTime(), eps: f.eps }));
+                            }
                             function interpEstimate(t) {
                                 if (t < lastTs) return null;
-                                if (t === lastTs) return lastEps; // overlap point for continuity
-                                const yearFrac = (t - lastTs) / MS_PER_YEAR;
-                                return lastEps * (1 + yoyGrowth * yearFrac);
+                                if (t === lastTs) return lastEps;
+                                for (let i = 0; i < fwdAnchors.length - 1; i++) {
+                                    if (t >= fwdAnchors[i].ts && t <= fwdAnchors[i + 1].ts) {
+                                        const frac = (t - fwdAnchors[i].ts) / (fwdAnchors[i + 1].ts - fwdAnchors[i].ts);
+                                        return fwdAnchors[i].eps + frac * (fwdAnchors[i + 1].eps - fwdAnchors[i].eps);
+                                    }
+                                }
+                                // Beyond last anchor — hold flat
+                                return fwdAnchors[fwdAnchors.length - 1].eps;
                             }
 
                             const actualPoints = candleData.map(cd => ({ x: cd.x, y: interpActual(cd.x) }));
@@ -1776,7 +1787,7 @@
                                 },
                                 {
                                     type: 'line',
-                                    label: 'TTM EPS',
+                                    label: 'Analyst Est.',
                                     data: estPoints,
                                     borderColor: '#c084fc',
                                     backgroundColor: 'transparent',

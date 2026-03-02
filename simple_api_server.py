@@ -779,19 +779,32 @@ async def get_earnings_data(ticker: str):
             key=lambda x: x["date"],
         )
 
-        # Compute YoY growth where we have data ~1 year apart
-        for i, item in enumerate(ttm_list):
-            prev = [t for t in ttm_list[:i] if t["date"] < item["date"]]
-            ago = prev[-1] if prev else None
-            if ago and ago["ttm_eps"] != 0:
-                item["yoy_growth"] = round(
-                    (item["ttm_eps"] - ago["ttm_eps"]) / abs(ago["ttm_eps"]), 4
-                )
+        # --- Analyst forward EPS estimates (current year + next year consensus) ---
+        forward_eps = []
+        try:
+            est = stock.earnings_estimate
+            if est is not None and not est.empty and "avg" in est.columns:
+                today = pd.Timestamp.today()
+                label_to_date = {
+                    "0y":  pd.Timestamp(f"{today.year}-12-31"),
+                    "+1y": pd.Timestamp(f"{today.year + 1}-12-31"),
+                }
+                for label, dt in label_to_date.items():
+                    if label in est.index:
+                        val = pd.to_numeric(est.loc[label, "avg"], errors="coerce")
+                        if not pd.isna(val):
+                            forward_eps.append({
+                                "date": dt.strftime("%Y-%m-%d"),
+                                "eps":  round(float(val), 4),
+                            })
+                forward_eps.sort(key=lambda x: x["date"])
+        except Exception:
+            pass
 
-        return {"ticker": ticker, "ttm_eps": ttm_list}
+        return {"ticker": ticker, "ttm_eps": ttm_list, "forward_eps": forward_eps}
     except Exception as e:
         print(f"Earnings fetch failed for {ticker}: {e}")
-        return {"ticker": ticker, "ttm_eps": []}
+        return {"ticker": ticker, "ttm_eps": [], "forward_eps": []}
 
 
 @app.get("/token/status")
