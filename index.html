@@ -907,13 +907,13 @@
             .flatMap(([, d]) => d.tickers);
 
         // ---------------------------------------------------------------
-        // Populate quick-ticker chips from Bucket 1 (High-Vol Semis/AI)
+        // Populate quick-ticker chips — curated suggestions
         // ---------------------------------------------------------------
         (function buildQuickTickers() {
             const container = document.getElementById('quickTickers');
             if (!container) return;
-            const b1 = TICKER_BUCKETS['High-Vol Semis/AI'].tickers;
-            container.innerHTML = b1.map(t =>
+            const suggested = ['AMD', 'NVDA', 'ORCL'];
+            container.innerHTML = suggested.map(t =>
                 `<div class="quick-ticker" onclick="setTicker('${t}')">${t}</div>`
             ).join('');
         })();
@@ -1384,6 +1384,7 @@
                                                 <col style="width: 6%">  <!-- Model -->
                                                 <col style="width: 6%">  <!-- Edge -->
                                                 <col style="width: 6%">  <!-- ROR -->
+                                                <col style="width: 6%">  <!-- Norm ROR -->
                                                 <col style="width: 6%">  <!-- EV -->
                                                 <col style="width: 6%">  <!-- θ Eff -->
                                                 <col style="width: 6%">  <!-- Theta -->
@@ -1403,6 +1404,7 @@
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Model</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Edge</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">ROR</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Norm ROR</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">EV</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">θ Eff</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Theta</th>
@@ -1414,7 +1416,7 @@
                                             <tbody>
                                                 ${data.options_data && data.options_data.edge > 0 && data.options_data.expiration === exp ? `
                                                 <tr style="background: rgba(128,90,213,0.08); border-bottom: 1px solid #30363d;">
-                                                    <td colspan="16" style="padding: 4px 8px; font-size: 0.72rem; color: var(--accent-purple); font-weight: 600; letter-spacing: 0.05em;">⭐ SUGGESTED TRADE</td>
+                                                    <td colspan="17" style="padding: 4px 8px; font-size: 0.72rem; color: var(--accent-purple); font-weight: 600; letter-spacing: 0.05em;">⭐ SUGGESTED TRADE</td>
                                                 </tr>
                                                 <tr style="border-bottom: 2px solid var(--accent-purple); background: rgba(128,90,213,0.25); border-left: 3px solid var(--accent-purple);">
                                                     <td style="padding:6px 8px;color:var(--text-strike);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><strong>$${data.options_data.strike.toFixed(2)}</strong></td>
@@ -1427,6 +1429,7 @@
                                                     <td style="padding:6px 8px;text-align:right;color:var(--accent-blue);">${data.options_data.model_prob_assignment.toFixed(2)}</td>
                                                     <td style="padding:6px 8px;text-align:right;font-weight:bold;color:var(--positive-green);">+${data.options_data.edge.toFixed(1)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ror.toFixed(1)}%</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.dte > 0 ? (data.options_data.ror * 30 / data.options_data.dte).toFixed(1) + '%' : '-'}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:var(--accent-purple);">${data.options_data.ev_per_share != null ? '$' + data.options_data.ev_per_share.toFixed(2) : '-'}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta_efficiency ? data.options_data.theta_efficiency.toFixed(3) : '-'}%</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.theta.toFixed(2)}</td>
@@ -1435,7 +1438,7 @@
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.implied_volatility * 100).toFixed(0)}%</td>
                                                 </tr>
                                                 <tr style="background: rgba(128,90,213,0.04); border-bottom: 1px solid #30363d;">
-                                                    <td colspan="16" style="padding: 3px 8px; font-size: 0.72rem; color: #718096; letter-spacing: 0.04em;">ALL STRIKES</td>
+                                                    <td colspan="17" style="padding: 3px 8px; font-size: 0.72rem; color: #718096; letter-spacing: 0.04em;">ALL STRIKES</td>
                                                 </tr>
                                                 ` : ''}
                                                 ${expData.options.map((opt, rowIdx) => {
@@ -1453,6 +1456,7 @@
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment != null ? opt.model_prob_assignment.toFixed(2) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge != null ? opt.edge.toFixed(1) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ror.toFixed(1)}%</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${expData.dte > 0 ? (opt.ror * 30 / expData.dte).toFixed(1) + '%' : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--accent-purple);">${opt.ev_per_share != null ? '$' + opt.ev_per_share.toFixed(2) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta_efficiency ? opt.theta_efficiency.toFixed(3) : '-'}%</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.theta.toFixed(2)}</td>
@@ -1715,36 +1719,68 @@
                         { type:'line', label:'EMA 12', data: maLine(ema12vals),  borderColor:'#38bdf8', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
                         { type:'line', label:'EMA 26', data: maLine(ema26vals),  borderColor:'#fb923c', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
                         { type:'line', label:'EMA 9',  data: maLine(ema9vals),   borderColor:'#a3e635', backgroundColor:'transparent', borderWidth:1.2, pointRadius:0 },
-                        // TTM EPS overlay (secondary Y-axis) — interpolate between report dates, flat after last report
+                        // TTM EPS overlay — solid line between reports, dashed estimate after last report
                         ...(epsData && epsData.ttm_eps && epsData.ttm_eps.length >= 1 ? (() => {
                             const sorted = epsData.ttm_eps.slice().sort((a, b) => a.date.localeCompare(b.date));
                             const epsWithTs = sorted.map(s => ({ ts: toTs(s.date), eps: s.ttm_eps }));
+                            const lastPt = sorted[sorted.length - 1];
+                            const lastTs = epsWithTs[epsWithTs.length - 1].ts;
+                            const lastEps = lastPt.ttm_eps;
+                            const yoyGrowth = lastPt.yoy_growth ?? 0;
+                            const MS_PER_YEAR = 365.25 * 24 * 3600 * 1000;
 
-                            function interpEps(t) {
+                            // Solid: interpolate between report dates, null after last report
+                            function interpActual(t) {
                                 if (t < epsWithTs[0].ts) return null;
-                                if (t >= epsWithTs[epsWithTs.length - 1].ts) return epsWithTs[epsWithTs.length - 1].eps;
+                                if (t > lastTs) return null;
+                                if (t === lastTs) return lastEps;
                                 for (let i = 0; i < epsWithTs.length - 1; i++) {
                                     if (t >= epsWithTs[i].ts && t < epsWithTs[i + 1].ts) {
                                         const frac = (t - epsWithTs[i].ts) / (epsWithTs[i + 1].ts - epsWithTs[i].ts);
                                         return epsWithTs[i].eps + frac * (epsWithTs[i + 1].eps - epsWithTs[i].eps);
                                     }
                                 }
-                                return epsWithTs[epsWithTs.length - 1].eps;
+                                return lastEps;
                             }
-                            const epsPoints = candleData.map(cd => ({ x: cd.x, y: interpEps(cd.x) }));
 
-                            return [{
-                                type: 'line',
-                                label: 'TTM EPS',
-                                data: epsPoints,
-                                borderColor: '#e879f9',
-                                backgroundColor: 'rgba(232,121,249,0.08)',
-                                borderWidth: 2.5,
-                                pointRadius: 0,
-                                yAxisID: 'yEps',
-                                fill: false,
-                                spanGaps: true,
-                            }];
+                            // Dashed: project from last report using YoY growth
+                            function interpEstimate(t) {
+                                if (t < lastTs) return null;
+                                if (t === lastTs) return lastEps; // overlap point for continuity
+                                const yearFrac = (t - lastTs) / MS_PER_YEAR;
+                                return lastEps * (1 + yoyGrowth * yearFrac);
+                            }
+
+                            const actualPoints = candleData.map(cd => ({ x: cd.x, y: interpActual(cd.x) }));
+                            const estPoints   = candleData.map(cd => ({ x: cd.x, y: interpEstimate(cd.x) }));
+
+                            return [
+                                {
+                                    type: 'line',
+                                    label: 'TTM EPS',
+                                    data: actualPoints,
+                                    borderColor: '#e879f9',
+                                    backgroundColor: 'rgba(232,121,249,0.08)',
+                                    borderWidth: 2.5,
+                                    pointRadius: 0,
+                                    yAxisID: 'yEps',
+                                    fill: false,
+                                    spanGaps: true,
+                                },
+                                {
+                                    type: 'line',
+                                    label: 'TTM EPS',
+                                    data: estPoints,
+                                    borderColor: '#c084fc',
+                                    backgroundColor: 'transparent',
+                                    borderWidth: 2.5,
+                                    borderDash: [6, 3],
+                                    pointRadius: 0,
+                                    yAxisID: 'yEps',
+                                    fill: false,
+                                    spanGaps: true,
+                                },
+                            ];
                         })() : []),
                     ]
                 },
