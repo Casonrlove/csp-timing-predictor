@@ -826,49 +826,48 @@
 
         // Check Schwab token status on page load
         async function checkTokenStatus() {
-            try {
-                const apiUrl = apiUrlInput.value.trim();
-                if (!apiUrl) return;
+            const statusDiv  = document.getElementById('tokenStatus');
+            const statusIcon = document.getElementById('tokenStatusIcon');
+            const statusText = document.getElementById('tokenStatusText');
+            const reauthLink = document.getElementById('reauthLink');
 
-                const response = await fetch(`${apiUrl}/token/status`);
-                if (!response.ok) return;
-
-                const data = await response.json();
-                const statusDiv  = document.getElementById('tokenStatus');
-                const statusIcon = document.getElementById('tokenStatusIcon');
-                const statusText = document.getElementById('tokenStatusText');
-                const reauthLink = document.getElementById('reauthLink');
-
-                const days = data.refresh_token_expires_in_days;
-                if (data.status === 'unavailable') { statusDiv.style.display = 'none'; return; }
-                if (data.reauth_url) reauthLink.href = data.reauth_url;
-
-                let bg, border, icon, msg;
-                if (days === undefined || data.status === 'unknown') {
-                    bg = 'rgba(237,137,54,0.15)'; border = '#ed8936'; icon = '⚠️';
-                    msg = 'Schwab: ?d';
-                } else if (days <= 0) {
-                    bg = 'rgba(239,68,68,0.18)'; border = '#ef4444'; icon = '🔴';
-                    msg = 'Schwab: 0d';
-                } else if (days < 2) {
-                    bg = 'rgba(239,68,68,0.15)'; border = '#ef4444'; icon = '🔴';
-                    msg = `Schwab: ${days.toFixed(1)}d`;
-                } else if (days < 4) {
-                    bg = 'rgba(237,137,54,0.15)'; border = '#ed8936'; icon = '🟡';
-                    msg = `Schwab: ${days.toFixed(1)}d`;
-                } else {
-                    bg = 'rgba(34,197,94,0.12)'; border = '#22c55e'; icon = '🟢';
-                    msg = `Schwab: ${days.toFixed(1)}d`;
-                }
-
+            function renderBadge(icon, msg, bg, border) {
+                statusIcon.textContent = icon;
+                statusText.textContent = msg;
                 statusDiv.style.background = bg;
                 statusDiv.style.border = `1px solid ${border}`;
                 statusDiv.style.color = 'var(--text-primary)';
-                statusIcon.textContent = icon;
-                statusText.textContent = msg;
                 statusDiv.style.display = 'flex';
+            }
+
+            const apiUrl = apiUrlInput.value.trim();
+            if (!apiUrl) return;
+
+            try {
+                const response = await fetch(`${apiUrl}/token/status`);
+                if (!response.ok) {
+                    renderBadge('⚠️', `Schwab: status ${response.status}`, 'rgba(237,137,54,0.15)', '#ed8936');
+                    return;
+                }
+
+                const data = await response.json();
+                if (data.status === 'unavailable') { statusDiv.style.display = 'none'; return; }
+                if (data.reauth_url) reauthLink.href = data.reauth_url;
+
+                const days = data.refresh_token_expires_in_days;
+                if (days === undefined || data.status === 'unknown') {
+                    renderBadge('⚠️', 'Schwab: ?d', 'rgba(237,137,54,0.15)', '#ed8936');
+                } else if (days <= 0) {
+                    renderBadge('🔴', 'Schwab: 0d', 'rgba(239,68,68,0.18)', '#ef4444');
+                } else if (days < 2) {
+                    renderBadge('🔴', `Schwab: ${days.toFixed(1)}d`, 'rgba(239,68,68,0.15)', '#ef4444');
+                } else if (days < 4) {
+                    renderBadge('🟡', `Schwab: ${days.toFixed(1)}d`, 'rgba(237,137,54,0.15)', '#ed8936');
+                } else {
+                    renderBadge('🟢', `Schwab: ${days.toFixed(1)}d`, 'rgba(34,197,94,0.12)', '#22c55e');
+                }
             } catch (e) {
-                // Silently fail - don't show warning if can't check
+                renderBadge('⚠️', 'Schwab: unreachable', 'rgba(237,137,54,0.15)', '#ed8936');
                 console.log('Token status check failed:', e);
             }
         }
