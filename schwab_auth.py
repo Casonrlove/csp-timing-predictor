@@ -88,6 +88,8 @@ def exchange_code_for_tokens(auth_code):
     # Token typically expires in 30 minutes
     expires_in = tokens.get('expires_in', 1800)
     config['token_expires_at'] = (datetime.now() + timedelta(seconds=expires_in)).isoformat()
+    # Track when full re-authorization happened (refresh token issued)
+    config['authorized_at'] = datetime.now().isoformat()
     save_config(config)
 
     print(f"✓ Tokens saved successfully!")

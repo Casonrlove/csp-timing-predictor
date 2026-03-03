@@ -671,15 +671,12 @@
             <h1>CSP Timing Predictor</h1>
         </div>
 
-        <div id="tokenWarning" style="display: none; background: linear-gradient(135deg, #5c2929 0%, #4a1d1d 100%); border: 2px solid #f85149; border-radius: 8px; padding: 15px; margin-bottom: 20px; color: white;">
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <span style="font-size: 1.5rem;">⚠️</span>
-                <div>
-                    <strong>Schwab Token Expiring Soon!</strong>
-                    <p style="margin: 5px 0 0 0; font-size: 0.9rem;" id="tokenWarningText"></p>
-                    <a id="reauthLink" href="#" target="_blank" style="color: #58a6ff; font-size: 0.9rem;">Click here to re-authorize</a>
-                </div>
+        <div id="tokenStatus" style="display: none; border-radius: 8px; padding: 10px 15px; margin-bottom: 16px; font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span id="tokenStatusIcon" style="font-size: 1.1rem;"></span>
+                <span id="tokenStatusText"></span>
             </div>
+            <a id="reauthLink" href="#" target="_blank" style="font-size: 0.8rem; white-space: nowrap; text-decoration: none; padding: 4px 10px; border-radius: 4px; background: rgba(255,255,255,0.15);">Re-authorize →</a>
         </div>
 
         <div class="card">
@@ -837,19 +834,40 @@
                 if (!response.ok) return;
 
                 const data = await response.json();
-                const warningDiv = document.getElementById('tokenWarning');
-                const warningText = document.getElementById('tokenWarningText');
+                const statusDiv  = document.getElementById('tokenStatus');
+                const statusIcon = document.getElementById('tokenStatusIcon');
+                const statusText = document.getElementById('tokenStatusText');
                 const reauthLink = document.getElementById('reauthLink');
 
-                if (data.status === 'expiring_soon' || (data.refresh_token_expires_in_days && data.refresh_token_expires_in_days < 2)) {
-                    warningText.textContent = `Token expires in ${data.refresh_token_expires_in_days.toFixed(1)} days. Re-authorize to keep using Schwab API.`;
-                    if (data.reauth_url) {
-                        reauthLink.href = data.reauth_url;
-                    }
-                    warningDiv.style.display = 'block';
+                if (data.reauth_url) reauthLink.href = data.reauth_url;
+
+                const days = data.refresh_token_expires_in_days;
+                if (data.status === 'unavailable') return; // Schwab not configured, hide
+
+                let bg, border, icon, msg;
+                if (days === undefined || data.status === 'unknown') {
+                    bg = 'rgba(237,137,54,0.15)'; border = '#ed8936'; icon = '⚠️';
+                    msg = 'Schwab auth: unknown — re-authorize to be safe';
+                } else if (days <= 0) {
+                    bg = 'rgba(239,68,68,0.18)'; border = '#ef4444'; icon = '🔴';
+                    msg = 'Schwab auth EXPIRED — options data unavailable';
+                } else if (days < 2) {
+                    bg = 'rgba(239,68,68,0.15)'; border = '#ef4444'; icon = '🔴';
+                    msg = `Schwab auth expires in ${days.toFixed(1)}d — re-authorize now`;
+                } else if (days < 4) {
+                    bg = 'rgba(237,137,54,0.15)'; border = '#ed8936'; icon = '🟡';
+                    msg = `Schwab auth expires in ${days.toFixed(1)}d`;
                 } else {
-                    warningDiv.style.display = 'none';
+                    bg = 'rgba(34,197,94,0.12)'; border = '#22c55e'; icon = '🟢';
+                    msg = `Schwab auth valid · ${days.toFixed(1)}d remaining`;
                 }
+
+                statusDiv.style.background = bg;
+                statusDiv.style.border = `1px solid ${border}`;
+                statusDiv.style.color = 'var(--text-primary)';
+                statusIcon.textContent = icon;
+                statusText.textContent = msg;
+                statusDiv.style.display = 'flex';
             } catch (e) {
                 // Silently fail - don't show warning if can't check
                 console.log('Token status check failed:', e);

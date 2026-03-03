@@ -820,25 +820,29 @@ def token_status():
         with open(config_path, 'r') as f:
             config = json.load(f)
 
-        if not config.get('token_expires_at'):
-            return {"status": "unknown", "message": "No token expiration info"}
+        reauth_url = "https://api.schwabapi.com/v1/oauth/authorize?response_type=code&client_id=" + config.get('client_id', '') + "&scope=readonly&redirect_uri=https%3A%2F%2Fdeveloper.schwab.com%2Foauth2-redirect.html"
 
-        # Access token expiry (30 min)
-        access_expires = datetime.fromisoformat(config['token_expires_at'])
-        access_remaining = (access_expires - datetime.now()).total_seconds()
+        if not config.get('authorized_at') and not config.get('token_expires_at'):
+            return {"status": "unknown", "message": "No token expiration info", "reauth_url": reauth_url}
 
-        # Refresh token expires 7 days after last refresh
-        # We estimate based on access token (refresh happens when access expires)
-        refresh_expires_approx = access_expires + timedelta(days=7)
-        refresh_remaining = (refresh_expires_approx - datetime.now()).total_seconds()
+        # Refresh token expires 7 days after full re-authorization
+        if config.get('authorized_at'):
+            authorized_at = datetime.fromisoformat(config['authorized_at'])
+            refresh_expires = authorized_at + timedelta(days=7)
+        else:
+            # Legacy fallback: no authorized_at stored yet — estimate conservatively
+            access_expires = datetime.fromisoformat(config['token_expires_at'])
+            refresh_expires = access_expires + timedelta(days=0)  # assume expired until re-auth stores it
+
+        refresh_remaining = (refresh_expires - datetime.now()).total_seconds()
         refresh_days = refresh_remaining / 86400
 
         return {
             "status": "ok" if refresh_days > 1 else "expiring_soon",
-            "access_token_expires_in_minutes": round(access_remaining / 60, 1),
-            "refresh_token_expires_in_days": round(refresh_days, 1),
+            "refresh_token_expires_in_days": round(max(refresh_days, 0), 1),
+            "authorized_at": config.get('authorized_at'),
+            "reauth_url": reauth_url,
             "warning": "Re-authorize soon!" if refresh_days < 2 else None,
-            "reauth_url": "https://api.schwabapi.com/v1/oauth/authorize?response_type=code&client_id=" + config['client_id'] + "&scope=readonly&redirect_uri=https%3A%2F%2Fdeveloper.schwab.com%2Foauth2-redirect.html" if refresh_days < 2 else None
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
