@@ -1158,7 +1158,13 @@ def predict(request: PredictionRequest):
 
             # Fallback to Yahoo Finance + Black-Scholes if Schwab failed or not available
             if not all_options:
-                all_options = get_all_csp_options(ticker, min_delta=request.min_delta, max_delta=request.max_delta)
+                all_options = get_all_csp_options(
+                    ticker,
+                    min_delta=request.min_delta,
+                    max_delta=request.max_delta,
+                    target_dte_min=20,
+                    target_dte_max=60,
+                )
                 options_source = "Yahoo+BS"
 
             print(f"Found {len(all_options)} options via {options_source}")

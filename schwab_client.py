@@ -281,27 +281,32 @@ def get_single_market_hours(market, date=None):
 
 def is_market_open(market='equity'):
     """
-    Check if a specific market is currently open
-
-    Args:
-        market: Market type ('equity', 'option', etc.)
-
-    Returns:
-        Boolean indicating if market is open
+    Check if a specific market is currently open.
+    Falls back to time-based estimate if Schwab API call fails or returns unexpected structure.
     """
+    def _time_based_estimate():
+        from datetime import datetime as _dt
+        import pytz
+        et = pytz.timezone('America/New_York')
+        now = _dt.now(et)
+        if now.weekday() >= 5:  # weekend
+            return False
+        h, m = now.hour, now.minute
+        return (h == 9 and m >= 30) or (10 <= h <= 15) or (h == 16 and m == 0)
+
     try:
         hours = get_single_market_hours(market)
-        # Parse the response to determine if market is open
         if market in hours:
             market_data = hours[market]
             if isinstance(market_data, dict):
                 for session_type, session_data in market_data.items():
                     if isinstance(session_data, dict) and session_data.get('isOpen'):
                         return True
+        # Schwab returned a valid response but isOpen=false — trust it
         return False
     except Exception as e:
-        print(f"Error checking market hours: {e}")
-        return False
+        print(f"Error checking market hours via Schwab ({e}), using time-based estimate")
+        return _time_based_estimate()
 
 
 def parse_option_chain_for_csp(chain_data, min_delta=0.10, max_delta=0.60, monthlies_only=True, min_dte=15):
