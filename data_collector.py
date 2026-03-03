@@ -161,14 +161,14 @@ class CSPDataCollector:
                 print("[Schwab] Falling back to Yahoo Finance")
                 self.data = None
 
-        # Fallback to Yahoo Finance (disabled in SCHWAB_ONLY mode)
-        if self.data is None and not self.schwab_only:
+        # Fallback to Yahoo Finance when Schwab has no data for this ticker.
+        # SCHWAB_ONLY only blocks fallback when Schwab itself is unavailable (line 132).
+        if self.data is None:
+            print(f"[Yahoo] Schwab returned no data for {self.ticker}, falling back to Yahoo Finance")
             stock = yf.Ticker(self.ticker)
             self.data = stock.history(period=self.period)
             data_source = "Yahoo"
             print(f"[Yahoo] Loaded {len(self.data)} days of price history")
-        elif self.data is None and self.schwab_only:
-            raise RuntimeError(f"[Schwab] No price data for {self.ticker} in SCHWAB_ONLY mode")
 
         # Get earnings dates from Yahoo (Schwab doesn't provide this)
         if self.schwab_only:
