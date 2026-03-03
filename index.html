@@ -671,7 +671,7 @@
             <h1>CSP Timing Predictor</h1>
         </div>
 
-        <div id="tokenStatus" style="display: none; border-radius: 8px; padding: 10px 15px; margin-bottom: 16px; font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+        <div id="tokenStatus" style="display: none; border-radius: 8px; padding: 10px 15px; margin-bottom: 16px; font-size: 0.85rem; align-items: center; justify-content: space-between; gap: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span id="tokenStatusIcon" style="font-size: 1.1rem;"></span>
                 <span id="tokenStatusText"></span>
@@ -839,10 +839,9 @@
                 const statusText = document.getElementById('tokenStatusText');
                 const reauthLink = document.getElementById('reauthLink');
 
-                if (data.reauth_url) reauthLink.href = data.reauth_url;
-
                 const days = data.refresh_token_expires_in_days;
-                if (data.status === 'unavailable') return; // Schwab not configured, hide
+                if (data.status === 'unavailable') { statusDiv.style.display = 'none'; return; }
+                if (data.reauth_url) reauthLink.href = data.reauth_url;
 
                 let bg, border, icon, msg;
                 if (days === undefined || data.status === 'unknown') {
