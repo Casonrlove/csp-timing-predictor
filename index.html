@@ -844,7 +844,9 @@
             if (!apiUrl) return;
 
             try {
-                const response = await fetch(`${apiUrl}/token/status`);
+                const response = await fetch(`${apiUrl}/token/status`, {
+                    headers: { 'ngrok-skip-browser-warning': '1' }
+                });
                 if (!response.ok) {
                     renderBadge('⚠️', `Schwab: status ${response.status}`, 'rgba(237,137,54,0.15)', '#ed8936');
                     return;
