@@ -769,7 +769,7 @@ class CSPDataCollector:
         1. Convert delta to strike_otm_pct using IV estimate
         2. Compute strike_price = close * (1 - strike_otm_pct)
         3. premium estimate = BS put premium from vol / delta
-        4. strike_breached = 1 if assigned at expiry OR 2x stop hit
+        4. csp_loss_pct = max(0, (strike - close_at_expiry) / strike)  continuous loss fraction
         5. Add 7 contract interaction features
 
         Args:
@@ -779,7 +779,7 @@ class CSPDataCollector:
 
         Returns:
             Expanded DataFrame with ~5x more rows (one per date-delta combination),
-            including columns: target_delta, strike_otm_pct, strike_breached,
+            including columns: target_delta, strike_otm_pct, csp_loss_pct,
             and 9 contract interaction features.
         """
         if delta_buckets is None:
@@ -823,17 +823,17 @@ class CSPDataCollector:
 
             strike_price = close * (1 - strike_otm_pct)
 
-            # Assignment-only breach: close at expiry below strike
-            strike_breached = np.where(
+            # Continuous loss fraction: fraction of strike lost at expiry (0 when not assigned)
+            csp_loss_pct = np.where(
                 np.isnan(close_price_fwd), np.nan,
-                np.where(close_price_fwd < strike_price, 1.0, 0.0)
+                np.maximum(0.0, (strike_price - close_price_fwd) / strike_price)
             )
 
             # Build per-delta slice
             delta_df = df.copy()
             delta_df['target_delta'] = target_delta
             delta_df['strike_otm_pct'] = strike_otm_pct
-            delta_df['strike_breached'] = strike_breached
+            delta_df['csp_loss_pct'] = csp_loss_pct
 
             # 9 contract interaction features
             delta_df['delta_x_vol'] = target_delta * vol
@@ -850,13 +850,15 @@ class CSPDataCollector:
         result = pd.concat(expanded_frames, ignore_index=False)
         # Drop the helper column and rows without valid target
         result = result.drop(columns=['_min_price_fwd', '_close_price_fwd'], errors='ignore')
-        result = result.dropna(subset=['strike_breached'])
+        result = result.dropna(subset=['csp_loss_pct'])
 
         # Sort by date then delta for deterministic ordering
         result = result.sort_index(kind='mergesort')
 
+        assigned_pct = (result['csp_loss_pct'] > 0).mean()
+        mean_loss = result['csp_loss_pct'].mean()
         print(f"Contract targets: {len(df)} dates × {len(delta_buckets)} deltas "
-              f"= {len(result)} rows  (breach rate: {result['strike_breached'].mean():.1%})")
+              f"= {len(result)} rows  (assigned: {assigned_pct:.1%}, mean_loss: {mean_loss:.4f})")
         return result
 
     def prepare_features(self):

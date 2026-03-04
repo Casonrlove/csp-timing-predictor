@@ -119,12 +119,13 @@ TIMING_THRESHOLDS = None
 TIMING_GROUP_MAPPING = None
 PER_TICKER_MODE = False
 
-# Contract model components (highest priority — unified strike-breach prediction)
+# Contract model components (highest priority — continuous loss regression)
 CONTRACT_MODE = False
+CONTRACT_REGRESSION = False       # True for v2 regression model (predict csp_loss_pct)
 CONTRACT_BASE_MODELS = None
 CONTRACT_META_LEARNERS = None
 CONTRACT_META_SCALERS = None
-CONTRACT_CALIBRATORS = None
+CONTRACT_CALIBRATORS = None       # kept for backward compat with old classifier model
 CONTRACT_SCALERS = None
 CONTRACT_GROUP_MAPPING = None
 CONTRACT_FEATURE_COLS = None      # 56 market + 7 contract
@@ -132,7 +133,9 @@ CONTRACT_MARKET_FEATURE_COLS = None
 CONTRACT_CONTRACT_FEATURE_COLS = None
 CONTRACT_VIX_BOUNDARY = 18.0
 CONTRACT_FORWARD_DAYS = 35
-CONTRACT_BASE_RATES: dict = {}   # per-model-key historical loss rates from training
+CONTRACT_BASE_RATES: dict = {}        # per-model-key: mean_loss_pct (regression) or breach_rate (classifier)
+CONTRACT_MEAN_LOSS: dict = {}         # per-model-key: mean csp_loss_pct from training (regression only)
+CONTRACT_DELTA_BASE_RATES: dict = {}  # per-model-key: {delta_float: mean_loss_pct} — per-delta historical loss
 MIN_EDGE_PP = 1.0
 MIN_EDGE_PROB = MIN_EDGE_PP / 100.0
 
@@ -148,7 +151,7 @@ ENSEMBLE_GROUP_MAPPING = None
 ENSEMBLE_VIX_BOUNDARY = 18.0
 ENSEMBLE_FEATURE_COLS = None
 
-# Try contract model first (highest priority — unified breach prediction)
+# Try contract model first (highest priority — continuous loss regression)
 contract_path = 'csp_contract_model.pkl'
 if os.path.exists(contract_path):
     try:
@@ -158,7 +161,7 @@ if os.path.exists(contract_path):
             CONTRACT_BASE_MODELS = contract_data['base_models']
             CONTRACT_META_LEARNERS = contract_data['meta_learners']
             CONTRACT_META_SCALERS = contract_data.get('meta_scalers', {})
-            CONTRACT_CALIBRATORS = contract_data.get('calibrators', {})
+            CONTRACT_CALIBRATORS = contract_data.get('calibrators', {})  # empty for v2 regression
             CONTRACT_SCALERS = contract_data['scalers']
             CONTRACT_GROUP_MAPPING = contract_data['group_mapping']
             CONTRACT_VIX_BOUNDARY = contract_data.get('vix_boundary', 18.0)
@@ -168,15 +171,19 @@ if os.path.exists(contract_path):
             CONTRACT_CONTRACT_FEATURE_COLS = contract_data.get('contract_feature_cols', [])
             FEATURE_NAMES = CONTRACT_MARKET_FEATURE_COLS  # For prepare_inference_features
             CONTRACT_MODE = True
+            CONTRACT_REGRESSION = bool(contract_data.get('regression', False))
             MODEL_PATH = contract_path
-            # Load per-regime historical loss rates for base-rate-relative CSP scoring
+            # Load per-regime metrics from training
             oof = contract_data.get('oof_metrics', {})
-            CONTRACT_BASE_RATES = {k: v['breach_rate'] for k, v in oof.items()} if oof else {}
-            n_cal = len(CONTRACT_CALIBRATORS)
-            print(f"  Contract model loaded: {sorted(CONTRACT_BASE_MODELS.keys())}")
+            if CONTRACT_REGRESSION:
+                CONTRACT_BASE_RATES = {k: v.get('mean_loss_pct', 0.015) for k, v in oof.items()} if oof else {}
+                CONTRACT_MEAN_LOSS = CONTRACT_BASE_RATES
+                CONTRACT_DELTA_BASE_RATES = {k: v.get('mean_loss_by_delta', {}) for k, v in oof.items()} if oof else {}
+            else:
+                CONTRACT_BASE_RATES = {k: v['breach_rate'] for k, v in oof.items()} if oof else {}
+            model_type_str = 'regression (csp_loss_pct)' if CONTRACT_REGRESSION else 'classifier (breach)'
+            print(f"  Contract model loaded [{model_type_str}]: {sorted(CONTRACT_BASE_MODELS.keys())}")
             print(f"  Features: {len(CONTRACT_FEATURE_COLS)} ({len(CONTRACT_MARKET_FEATURE_COLS)} market + {len(CONTRACT_CONTRACT_FEATURE_COLS)} contract)")
-            if n_cal:
-                print(f"  Calibrators: {n_cal}, Meta-scalers: {len(CONTRACT_META_SCALERS)}")
     except Exception as e:
         print(f"  Failed to load contract model: {e}")
         CONTRACT_MODE = False
@@ -413,10 +420,11 @@ def reload_model():
     global ENSEMBLE_MODE, ENSEMBLE_BASE_MODELS, ENSEMBLE_META_LEARNERS
     global ENSEMBLE_META_SCALERS, ENSEMBLE_CALIBRATORS
     global ENSEMBLE_SCALERS, ENSEMBLE_THRESHOLDS, ENSEMBLE_GROUP_MAPPING, ENSEMBLE_FEATURE_COLS
-    global CONTRACT_MODE, CONTRACT_BASE_MODELS, CONTRACT_META_LEARNERS
+    global CONTRACT_MODE, CONTRACT_REGRESSION, CONTRACT_BASE_MODELS, CONTRACT_META_LEARNERS
     global CONTRACT_META_SCALERS, CONTRACT_CALIBRATORS, CONTRACT_SCALERS
     global CONTRACT_GROUP_MAPPING, CONTRACT_FEATURE_COLS, CONTRACT_MARKET_FEATURE_COLS
     global CONTRACT_CONTRACT_FEATURE_COLS, CONTRACT_VIX_BOUNDARY, CONTRACT_FORWARD_DAYS
+    global CONTRACT_BASE_RATES, CONTRACT_MEAN_LOSS, CONTRACT_DELTA_BASE_RATES
 
     # Try contract model first (highest priority)
     contract_path = 'csp_contract_model.pkl'
@@ -437,13 +445,22 @@ def reload_model():
                 CONTRACT_CONTRACT_FEATURE_COLS = cdata.get('contract_feature_cols', [])
                 FEATURE_NAMES = CONTRACT_MARKET_FEATURE_COLS
                 CONTRACT_MODE = True
+                CONTRACT_REGRESSION = bool(cdata.get('regression', False))
                 ENSEMBLE_MODE = False
                 PER_TICKER_MODE = True  # suppress global fallback
                 MODEL_PATH = contract_path
+                oof = cdata.get('oof_metrics', {})
+                if CONTRACT_REGRESSION:
+                    CONTRACT_BASE_RATES = {k: v.get('mean_loss_pct', 0.015) for k, v in oof.items()} if oof else {}
+                    CONTRACT_MEAN_LOSS = CONTRACT_BASE_RATES
+                    CONTRACT_DELTA_BASE_RATES = {k: v.get('mean_loss_by_delta', {}) for k, v in oof.items()} if oof else {}
+                else:
+                    CONTRACT_BASE_RATES = {k: v['breach_rate'] for k, v in oof.items()} if oof else {}
+                model_type_str = 'regression (csp_loss_pct)' if CONTRACT_REGRESSION else 'classifier (breach)'
                 return {
                     "status": "success",
                     "message": f"Contract model reloaded from {contract_path}",
-                    "model_type": "Contract V1 (XGB+LGBM+Meta, breach prediction)",
+                    "model_type": f"Contract V2 (XGB+LGBM+Meta, {model_type_str})",
                     "keys": sorted(CONTRACT_BASE_MODELS.keys()),
                     "timestamp": datetime.now().isoformat()
                 }
@@ -958,8 +975,11 @@ def predict(request: PredictionRequest):
             regime_val = _mfeat('Regime_Trend', 1.0)
             vol_5d_20d_val = max(min(_mfeat('Vol_5D_vs_20D', 1.0), 3.0), 0.3)
 
-            # Evaluate P(breach) for each contract; used later for EV-based selection
-            contract_breach_probs = {}  # {delta: p_breach}
+            # Evaluate model output for each delta bucket; used later for EV-based selection
+            # For regression: predicted_loss_pct per delta
+            # For classifier (backward compat): P(breach) per delta
+            contract_loss_pcts = {}   # {delta: predicted_loss_pct}  — regression
+            contract_breach_probs = {}  # {delta: p_breach}           — classifier (legacy)
             delta_buckets = [0.10, 0.20, 0.30, 0.40, 0.50]
 
             for target_delta in delta_buckets:
@@ -994,12 +1014,17 @@ def predict(request: PredictionRequest):
 
                 # Route through model
                 X_sc = scaler.transform(full_vec)
-                xgb_p = base['xgb'].predict_proba(X_sc)[0, 1]
-                lgbm_p = base['lgbm'].predict_proba(X_sc)[0, 1] if base.get('lgbm') else xgb_p
 
                 fc_full = CONTRACT_FEATURE_COLS
                 def _cfeat(name, default=0.0):
                     return float(full_vec[0, fc_full.index(name)] if name in fc_full else default)
+
+                if CONTRACT_REGRESSION:
+                    xgb_p = float(np.clip(base['xgb'].predict(X_sc)[0], 0.0, 1.0))
+                    lgbm_p = float(np.clip(base['lgbm'].predict(X_sc)[0], 0.0, 1.0)) if base.get('lgbm') else xgb_p
+                else:
+                    xgb_p = base['xgb'].predict_proba(X_sc)[0, 1]
+                    lgbm_p = base['lgbm'].predict_proba(X_sc)[0, 1] if base.get('lgbm') else xgb_p
 
                 meta_X = np.array([[
                     xgb_p, lgbm_p,
@@ -1011,29 +1036,49 @@ def predict(request: PredictionRequest):
                 if CONTRACT_META_SCALERS and model_key in CONTRACT_META_SCALERS:
                     meta_X = CONTRACT_META_SCALERS[model_key].transform(meta_X)
 
-                if CONTRACT_CALIBRATORS and model_key in CONTRACT_CALIBRATORS:
+                if CONTRACT_REGRESSION:
+                    predicted_loss = float(np.clip(meta.predict(meta_X)[0], 0.0, 1.0))
+                    contract_loss_pcts[target_delta] = predicted_loss
+                    contract_breach_probs[target_delta] = predicted_loss  # alias for shared code below
+                elif CONTRACT_CALIBRATORS and model_key in CONTRACT_CALIBRATORS:
                     p_breach = float(CONTRACT_CALIBRATORS[model_key].predict_proba(meta_X)[0, 1])
+                    contract_breach_probs[target_delta] = p_breach
                 else:
                     p_breach = float(meta.predict_proba(meta_X)[0, 1])
+                    contract_breach_probs[target_delta] = p_breach
 
-                contract_breach_probs[target_delta] = p_breach
+            # Derive backward-compat API fields from delta~0.30 bucket
+            ref_val = contract_breach_probs.get(0.30, 0.015 if CONTRACT_REGRESSION else 0.20)
+            if CONTRACT_REGRESSION:
+                # For regression: p_downside is normalized predicted loss
+                # p_downside=0 when loss=0, p_downside=0.5 when loss=mean, approaches 1 for large loss
+                mean_loss_ref = CONTRACT_BASE_RATES.get(model_key, 0.015)
+                ratio = ref_val / max(mean_loss_ref, 1e-6)
+                p_downside = float(ratio / (ratio + 1.0))
+                p_safe = 1.0 - p_downside
+                # Below-mean loss → positive prediction; above-mean → 0
+                prediction = int(ref_val < mean_loss_ref)
+                model_type = f"Contract V2 regression ({group}/{vix_regime})"
+            else:
+                _base_rate = CONTRACT_BASE_RATES.get(model_key, 0.30)
+                p_safe = 1.0 - ref_val
+                p_downside = ref_val
+                prediction = int(ref_val < _base_rate)
+                model_type = f"Contract V1 ({group}/{vix_regime})"
 
-            # Derive p_safe from delta~0.30 for backward-compatible API response
-            p_breach_ref = contract_breach_probs.get(0.30, 0.20)
-            p_safe = 1.0 - p_breach_ref
-            p_downside = p_breach_ref
-            # Use historical loss rate as threshold (not 0.50).
-            # With correct target (expiry + 2x stop), loss rate ~30% — never near 50%.
-            _base_rate = CONTRACT_BASE_RATES.get(model_key, 0.30)
-            prediction = int(p_breach_ref < _base_rate)
-            model_type = f"Contract V1 ({group}/{vix_regime})"
-
-            # Store breach probs on collector for later use in options EV
+            # Store on collector for later use in options EV
             collector._contract_breach_probs = contract_breach_probs
+            if CONTRACT_REGRESSION:
+                collector._contract_loss_pcts = contract_loss_pcts
 
-            print(f"[Contract] {ticker} -> {group}/{vix_regime}  "
-                  f"P(breach|d=0.30)={p_breach_ref:.3f}  "
-                  f"P(breach) range: {min(contract_breach_probs.values()):.3f}-{max(contract_breach_probs.values()):.3f}")
+            if CONTRACT_REGRESSION:
+                print(f"[Contract Reg] {ticker} -> {group}/{vix_regime}  "
+                      f"loss_pct(d=0.30)={ref_val:.4f}  "
+                      f"range: {min(contract_loss_pcts.values()):.4f}-{max(contract_loss_pcts.values()):.4f}")
+            else:
+                print(f"[Contract] {ticker} -> {group}/{vix_regime}  "
+                      f"P(breach|d=0.30)={ref_val:.3f}  "
+                      f"range: {min(contract_breach_probs.values()):.3f}-{max(contract_breach_probs.values()):.3f}")
 
         # ---- Ensemble V3 dispatch ----
         elif ENSEMBLE_MODE:
@@ -1115,16 +1160,22 @@ def predict(request: PredictionRequest):
         p_safe = apply_probability_calibration(p_safe_raw)
         p_downside = 1.0 - p_safe
 
-        # Base-rate-relative CSP score:
-        #   score = (base_rate - p_breach) / base_rate  →  clipped to [-1, +1]
-        #   > 0 : below-average loss risk (good time to sell)
-        #   = 0 : average conditions
-        #   < 0 : above-average loss risk (avoid or size down)
-        if CONTRACT_MODE and CONTRACT_BASE_RATES:
+        # CSP score:
+        #   Regression mode: (mean_loss - predicted_loss) / mean_loss  → [-1, +1]
+        #     > 0 : below-average expected loss (good time to sell)
+        #     = 0 : average conditions
+        #     < 0 : above-average expected loss (avoid or size down)
+        #   Legacy classifier mode: (base_rate - p_breach) / base_rate
+        if CONTRACT_MODE and CONTRACT_REGRESSION and CONTRACT_BASE_RATES:
+            _mean_loss = CONTRACT_BASE_RATES.get(locals().get('model_key', ''), 0.015)
+            _pred_loss_ref = contract_loss_pcts.get(0.30, _mean_loss) if 'contract_loss_pcts' in locals() else _mean_loss
+            csp_score = float(np.clip((_mean_loss - _pred_loss_ref) / max(_mean_loss, 1e-6), -1.0, 1.0))
+        elif CONTRACT_MODE and CONTRACT_BASE_RATES:
             _br = CONTRACT_BASE_RATES.get(locals().get('model_key', ''), 0.30)
+            csp_score = float(np.clip((_br - p_downside) / max(_br, 0.01), -1.0, 1.0))
         else:
             _br = 0.50   # legacy models centered at 0.50
-        csp_score = float(np.clip((_br - p_downside) / max(_br, 0.01), -1.0, 1.0))
+            csp_score = float(np.clip((_br - p_downside) / max(_br, 0.01), -1.0, 1.0))
 
         # Get current data - try Schwab first for real-time price
         current_data = collector.data.iloc[-1]
@@ -1173,11 +1224,15 @@ def predict(request: PredictionRequest):
 
             print(f"Found {len(all_options)} options via {options_source}")
 
-            # Calculate edge: contract model provides P(breach) per delta bucket
-            use_contract_edge = CONTRACT_MODE and hasattr(collector, '_contract_breach_probs')
+            # Calculate edge using contract model predictions
+            use_contract_edge = CONTRACT_MODE and (
+                hasattr(collector, '_contract_loss_pcts') or
+                hasattr(collector, '_contract_breach_probs')
+            )
 
             if use_contract_edge:
-                print("[Edge] Using contract model P(breach)")
+                edge_type = "regression (loss_pct)" if CONTRACT_REGRESSION else "classifier (P_breach)"
+                print(f"[Edge] Using contract model {edge_type}")
             else:
                 print("[Edge] No edge model available - edge estimation disabled")
 
@@ -1190,14 +1245,16 @@ def predict(request: PredictionRequest):
 
                 otm_pct = ((current_price - strike) / current_price) * 100
 
-                model_prob = None
+                model_prob = None  # regression: predicted_loss_pct; classifier: P(breach)
 
                 if use_contract_edge:
-                    # Interpolate between the two nearest delta buckets so every
-                    # strike gets a unique model_prob rather than snapping all
-                    # nearby strikes to the same bucket value.
-                    breach_probs = collector._contract_breach_probs
-                    sorted_bp = sorted(breach_probs.items())  # [(delta, prob), ...]
+                    # Interpolate between the two nearest delta buckets
+                    model_vals = (
+                        collector._contract_loss_pcts
+                        if CONTRACT_REGRESSION and hasattr(collector, '_contract_loss_pcts')
+                        else collector._contract_breach_probs
+                    )
+                    sorted_bp = sorted(model_vals.items())  # [(delta, val), ...]
                     if market_delta <= sorted_bp[0][0]:
                         model_prob = sorted_bp[0][1]
                     elif market_delta >= sorted_bp[-1][0]:
@@ -1225,24 +1282,48 @@ def predict(request: PredictionRequest):
                     option['is_suggested'] = False
                     continue
 
-                # Edge in both unit systems:
-                #   edge_prob: probability units (0.01 = 1 percentage point)
-                #   edge_pp: percentage points
-                edge_prob = market_delta - model_prob
-                edge_pp = edge_prob * 100.0
-
-                # EV model
+                # EV model and edge calculation
                 spread = max(0.0, ask - bid)
                 spread_pct = (spread / premium) if premium > 0 else 1.0
                 slippage_cost = spread * 0.25
-                assignment_loss_pct = 0.05
-                expected_assignment_loss = model_prob * strike * assignment_loss_pct
-                expected_value = premium - expected_assignment_loss - slippage_cost
+
+                if CONTRACT_REGRESSION:
+                    # model_prob = predicted_loss_pct = E[max(0, strike - close_expiry) / strike]
+                    # edge = market_premium_pct - predicted_loss_pct  (both as % of strike)
+                    market_premium_pct = premium / strike if strike > 0 else 0.0
+                    edge_pct = market_premium_pct - model_prob   # positive = net positive expected return
+                    edge_prob = edge_pct   # in pct-of-strike units
+                    edge_pp = edge_pct * 100.0
+                    # EV: directly use predicted loss as dollar loss expectation
+                    expected_assignment_loss = model_prob * strike
+                    expected_value = premium - expected_assignment_loss - slippage_cost
+
+                    # Task 3 — relative edge vs historical base rate for this delta
+                    # Find nearest delta bucket (0.10, 0.20, 0.30, 0.40, 0.50)
+                    _delta_rates = CONTRACT_DELTA_BASE_RATES.get(model_key, {})
+                    if _delta_rates:
+                        nearest_bucket = min(_delta_rates.keys(), key=lambda d: abs(d - market_delta))
+                        base_loss = _delta_rates[nearest_bucket]
+                    else:
+                        base_loss = CONTRACT_BASE_RATES.get(model_key, 0.015)
+                    rel_edge_pp = (base_loss - model_prob) * 100.0   # pp of strike vs historical avg
+                    loss_vs_avg = model_prob / base_loss if base_loss > 0 else 1.0
+                else:
+                    # Classifier: edge = market_delta - P(breach)
+                    edge_prob = market_delta - model_prob
+                    edge_pp = edge_prob * 100.0
+                    # EV: legacy hardcoded 5% assignment loss
+                    assignment_loss_pct = 0.05
+                    expected_assignment_loss = model_prob * strike * assignment_loss_pct
+                    expected_value = premium - expected_assignment_loss - slippage_cost
+                    base_loss = None
+                    rel_edge_pp = None
+                    loss_vs_avg = None
 
                 risk_adjusted_ev = expected_value
 
                 option['market_delta'] = round(market_delta, 3)
-                option['model_prob_assignment'] = round(model_prob, 3)
+                option['model_prob_assignment'] = round(model_prob, 4)
                 option['edge_prob'] = round(edge_prob, 4)
                 option['edge_pp'] = round(edge_pp, 2)
                 option['edge'] = option['edge_pp']  # legacy alias
@@ -1251,6 +1332,9 @@ def predict(request: PredictionRequest):
                 option['ev_per_share'] = round(expected_value, 4)
                 option['ev_pct_of_strike'] = round((expected_value / strike) * 100, 3) if strike > 0 else None
                 option['risk_adjusted_ev'] = round(risk_adjusted_ev, 4)
+                option['base_loss_pct'] = round(base_loss, 4) if base_loss is not None else None
+                option['rel_edge_pp'] = round(rel_edge_pp, 2) if rel_edge_pp is not None else None
+                option['loss_vs_avg'] = round(loss_vs_avg, 2) if loss_vs_avg is not None else None
                 option['is_suggested'] = False
 
             # Select best option via EV optimization with uncertainty no-trade band.
@@ -1435,7 +1519,7 @@ def predict(request: PredictionRequest):
                 suggested_expiration=options_data['expiration'] if options_data else None,
             )
             if CONTRACT_MODE:
-                log_kwargs['model_version'] = 'contract_v1'
+                log_kwargs['model_version'] = 'contract_v2_regression' if CONTRACT_REGRESSION else 'contract_v1'
                 log_kwargs['label_forward_days'] = int(CONTRACT_FORWARD_DAYS)
                 if options_data:
                     log_kwargs['model_p_breach'] = options_data.get('model_prob_assignment')

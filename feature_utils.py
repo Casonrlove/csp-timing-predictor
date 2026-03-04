@@ -64,23 +64,27 @@ def calculate_group_threshold(df: pd.DataFrame) -> float:
 # Contract-level utilities (Phase 1 of contract model reframe)
 # ---------------------------------------------------------------------------
 
-def create_breach_target(df: pd.DataFrame) -> pd.DataFrame:
-    """Set target = strike_breached.  No rolling threshold needed.
+def create_loss_target(df: pd.DataFrame) -> pd.DataFrame:
+    """Set target = csp_loss_pct (continuous regression target).
 
-    For contract-level data the target is the direct physical outcome
-    (did the strike get breached during the forward window?), so we
-    just copy the column rather than computing a rolling quantile.
+    For contract-level data the target is the expected loss fraction:
+    max(0, (strike - close_at_expiry) / strike).  Zero means fully profitable
+    (premium kept, no assignment); positive values quantify the loss magnitude.
 
     Args:
         df: DataFrame produced by ``CSPDataCollector.create_contract_targets()``.
-            Must contain column ``strike_breached``.
+            Must contain column ``csp_loss_pct``.
 
     Returns:
-        Copy of ``df`` with a new integer column ``target``.
+        Copy of ``df`` with a new float column ``target``.
     """
     df = df.copy()
-    df["target"] = df["strike_breached"].astype(int)
+    df["target"] = df["csp_loss_pct"].astype(float)
     return df
+
+
+# Backward-compat alias
+create_breach_target = create_loss_target
 
 
 def contract_aware_time_split(

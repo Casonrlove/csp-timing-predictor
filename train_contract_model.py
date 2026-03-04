@@ -1,21 +1,23 @@
 """
-CSP Contract Model — Unified Strike-Breach Prediction
-======================================================
-Predicts P(strike_breach | ticker, date, market_features, strike_otm_pct)
+CSP Contract Model — Continuous Loss Regression
+================================================
+Predicts E[csp_loss_pct | ticker, date, market_features, strike_otm_pct]
 for multiple delta buckets simultaneously.
 
-Architecture mirrors train_ensemble_v3.py:
+  csp_loss_pct = max(0, (strike - close_at_expiry) / strike)
+
+Architecture:
   - 4 ticker groups, VIX regime split at 18.0
-  - XGB + LGBM DART base learners, 5-fold OOF stacking
-  - LogisticRegression meta-learner on [xgb_prob, lgbm_prob, VIX, VIX_Rank, Regime_Trend]
-  - StandardScaler for meta-features, isotonic calibration on full OOF
+  - XGB + LGBM DART base regressors, 5-fold OOF stacking
+  - XGBRegressor meta-learner on [xgb_pred, lgbm_pred, VIX, VIX_Rank, Regime_Trend]
+  - StandardScaler for meta-features
   - Recency weighting (2yr half-life), expanding window
 
-Key differences from ensemble V3:
-  1. Target: strike_breached (direct physical outcome)
-  2. Features: 56 market + 7 contract = 63 total
-  3. CV: contract_aware_time_split() (date-level splits, not row-level)
-  4. Data: multi-strike expanded rows from create_contract_targets()
+Key differences from binary classifier version:
+  1. Target: csp_loss_pct (continuous — no thresholding)
+  2. Fixes train/settle mismatch: uses close_at_expiry not min_price
+  3. Edge = market_premium_pct - predicted_loss_pct (apples-to-apples $)
+  4. No calibration step needed
 
 Saves to csp_contract_model.pkl (coexists with existing timing model).
 
@@ -35,10 +37,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.frozen import FrozenEstimator
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import brier_score_loss, roc_auc_score
+from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import StandardScaler
 
 try:
@@ -53,7 +52,7 @@ from data_collector import CSPDataCollector
 from feature_utils import (
     CONTRACT_FEATURE_COLS,
     contract_aware_time_split,
-    create_breach_target,
+    create_loss_target,
 )
 
 MIN_REGIME_SAMPLES = 400
@@ -105,7 +104,8 @@ DEFAULT_XGB_PARAMS = {
     'reg_alpha': 0.1,
     'reg_lambda': 1.0,
     'random_state': 42,
-    'eval_metric': 'auc',
+    'eval_metric': 'rmse',
+    'objective': 'reg:squarederror',
     'tree_method': 'hist',
 }
 
@@ -117,8 +117,8 @@ DEFAULT_LGBM_PARAMS = {
     'feature_fraction': 0.7,
     'bagging_fraction': 0.8,
     'bagging_freq': 5,
-    'objective': 'binary',
-    'metric': 'auc',
+    'objective': 'regression',
+    'metric': 'rmse',
     'n_estimators': 500,
     'random_state': 42,
     'verbose': -1,
@@ -127,14 +127,13 @@ DEFAULT_LGBM_PARAMS = {
 
 
 class ContractModelTrainer:
-    """Train XGB + LGBM stacking ensemble for contract-level breach prediction."""
+    """Train XGB + LGBM stacking ensemble for contract-level loss prediction (regression)."""
 
     def __init__(self, use_gpu: bool = True, use_optuna_params: bool = False,
                  recency_halflife: float = 2.0, n_estimators: int | None = None):
         self.base_models: dict = {}
         self.meta_learners: dict = {}
         self.meta_scalers: dict = {}
-        self.calibrators: dict = {}
         self.scalers: dict = {}
         self.thresholds: dict = {}
         self.group_mapping: dict = {}
@@ -230,12 +229,11 @@ class ContractModelTrainer:
     # Hyperparameter helpers
     # ------------------------------------------------------------------
 
-    def _xgb_params(self, model_key: str, scale_pos_weight: float) -> dict:
+    def _xgb_params(self, model_key: str) -> dict:
         p = dict(DEFAULT_XGB_PARAMS)
         optuna_key = f'{model_key}_xgb'
         if optuna_key in self.optuna_params:
             p.update(self.optuna_params[optuna_key])
-        p['scale_pos_weight'] = scale_pos_weight
         if self.n_estimators_override:
             p['n_estimators'] = self.n_estimators_override
         if self.use_gpu:
@@ -244,12 +242,11 @@ class ContractModelTrainer:
             p['n_jobs'] = -1
         return p
 
-    def _lgbm_params(self, model_key: str, scale_pos_weight: float) -> dict:
+    def _lgbm_params(self, model_key: str) -> dict:
         p = dict(DEFAULT_LGBM_PARAMS)
         optuna_key = f'{model_key}_lgbm'
         if optuna_key in self.optuna_params:
             p.update(self.optuna_params[optuna_key])
-        p['scale_pos_weight'] = scale_pos_weight
         if self.n_estimators_override:
             p['n_estimators'] = self.n_estimators_override
         p['n_jobs'] = -1
@@ -272,62 +269,33 @@ class ContractModelTrainer:
         return np.exp(-np.log(2) * days_ago / halflife_days)
 
     def _train_regime_slice(self, model_key: str, df_slice: pd.DataFrame) -> float:
-        """Train XGB + LGBM via contract-aware OOF stacking.
+        """Train XGB + LGBM regression via contract-aware OOF stacking.
 
-        Calibration strategy: reserve the last 6 months of dates as a genuine
-        holdout. The final base models are trained on the pre-holdout data; the
-        isotonic calibrator is then fitted on predictions those exact models make
-        on the holdout. This ensures the calibrator maps the same probability
-        distribution the production model will produce on new data.
+        Target: csp_loss_pct = max(0, (strike - close_at_expiry) / strike)
 
-        Falls back to OOF calibration if the holdout period is too small.
-
-        Returns mean OOF AUC across folds.
+        Returns mean OOF RMSE across folds (lower is better).
         """
-        # Apply breach target (direct physical outcome)
-        df_slice = create_breach_target(df_slice)
+        # Apply regression loss target
+        df_slice = create_loss_target(df_slice)
 
         # Ensure all feature columns exist
         for col in self.feature_cols:
             if col not in df_slice.columns:
                 df_slice[col] = 0.0
 
-        # ------------------------------------------------------------------
-        # Reserve last 6 months as calibration holdout
-        # ------------------------------------------------------------------
-        unique_dates = pd.to_datetime(df_slice.index).normalize().unique().sort_values()
-        holdout_cutoff = unique_dates[-1] - pd.DateOffset(months=6)
-        train_mask_s = pd.to_datetime(df_slice.index).normalize() <= holdout_cutoff
-        holdout_mask_s = ~train_mask_s
-
-        df_train = df_slice[train_mask_s]
-        df_holdout = df_slice[holdout_mask_s]
-
-        holdout_ok = (
-            len(df_holdout) >= 100
-            and len(np.unique(df_holdout['target'].values)) > 1
-        )
-        if not holdout_ok:
-            print(f"  [{model_key}] Holdout too small ({len(df_holdout)} rows) — using OOF calibration")
-            df_train = df_slice   # fall back: train on all, calibrate on OOF
-
-        X = df_train[self.feature_cols].values
-        y = df_train['target'].values
+        X = df_slice[self.feature_cols].values
+        y = df_slice['target'].values
 
         # Replace inf/nan in features
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
-        sample_weights = self._compute_sample_weights(df_train)
-
-        neg = (y == 0).sum()
-        pos = (y == 1).sum()
-        spw = neg / pos if pos > 0 else 1.0
+        sample_weights = self._compute_sample_weights(df_slice)
 
         meta_idx = self._get_meta_feature_indices(self.feature_cols)
 
         # Contract-aware time split (splits on unique dates, not rows)
         splits = contract_aware_time_split(
-            df_train,
+            df_slice,
             n_splits=N_META_FOLDS,
             purge_days=FORWARD_DAYS,
         )
@@ -336,11 +304,13 @@ class ContractModelTrainer:
         oof_lgbm = np.zeros(len(X))
         oof_meta = [np.zeros(len(X)) for _ in meta_idx]
         valid_oof_mask = np.zeros(len(X), dtype=bool)
-        oof_aucs = []
+        oof_rmses = []
 
         device = 'cuda' if self.use_gpu else 'cpu'
-        hold_info = f"  holdout={len(df_holdout)}" if holdout_ok else "  (OOF cal)"
-        print(f"  [{model_key}] Device={device}  train={len(X)}{hold_info}  breach={y.mean():.1%}  spw={spw:.2f}")
+        assigned_rate = float((y > 0).mean())
+        mean_loss = float(y.mean())
+        print(f"  [{model_key}] Device={device}  n={len(X)}  "
+              f"assigned={assigned_rate:.1%}  mean_loss={mean_loss:.4f}")
         t_slice_start = time.time()
         print(f"  [{model_key}] OOF folds:", end=' ', flush=True)
 
@@ -351,21 +321,21 @@ class ContractModelTrainer:
             y_tr, y_val = y[tr_idx], y[val_idx]
             sw_tr = sample_weights[tr_idx]
 
-            if len(np.unique(y_val)) < 2:
+            if len(y_val) < 10:
                 continue
 
             valid_oof_mask[val_idx] = True
 
-            # XGBoost
-            xgb_model = xgb.XGBClassifier(**self._xgb_params(model_key, spw))
+            # XGBoost regressor
+            xgb_model = xgb.XGBRegressor(**self._xgb_params(model_key))
             xgb_model.fit(X_tr, y_tr, sample_weight=sw_tr, verbose=False)
-            oof_xgb[val_idx] = xgb_model.predict_proba(X_val)[:, 1]
+            oof_xgb[val_idx] = np.clip(xgb_model.predict(X_val), 0.0, 1.0)
 
-            # LightGBM
+            # LightGBM regressor
             if LGBM_AVAILABLE:
-                lgbm_model = lgb.LGBMClassifier(**self._lgbm_params(model_key, spw))
+                lgbm_model = lgb.LGBMRegressor(**self._lgbm_params(model_key))
                 lgbm_model.fit(X_tr, y_tr, sample_weight=sw_tr)
-                oof_lgbm[val_idx] = lgbm_model.predict_proba(X_val)[:, 1]
+                oof_lgbm[val_idx] = np.clip(lgbm_model.predict(X_val), 0.0, 1.0)
             else:
                 oof_lgbm[val_idx] = oof_xgb[val_idx]
 
@@ -373,21 +343,25 @@ class ContractModelTrainer:
                 if idx >= 0:
                     oof_meta[j][val_idx] = X[val_idx, idx]
 
-            fold_prob = (oof_xgb[val_idx] + oof_lgbm[val_idx]) / 2.0
-            fold_auc = roc_auc_score(y_val, fold_prob)
-            oof_aucs.append(fold_auc)
-            print(f"{fold_auc:.3f}", end=' ', flush=True)
+            fold_avg = (oof_xgb[val_idx] + oof_lgbm[val_idx]) / 2.0
+            fold_rmse = float(np.sqrt(mean_squared_error(y_val, fold_avg)))
+            oof_rmses.append(fold_rmse)
+            print(f"{fold_rmse:.4f}", end=' ', flush=True)
 
-        mean_oof_auc = float(np.mean(oof_aucs)) if oof_aucs else float('nan')
-        print(f"  -> mean OOF AUC = {mean_oof_auc:.4f}")
+        mean_oof_rmse = float(np.mean(oof_rmses)) if oof_rmses else float('nan')
+        print(f"  -> mean OOF RMSE = {mean_oof_rmse:.5f}")
 
-        # Brier score on OOF
+        # Pearson correlation on OOF
         if valid_oof_mask.sum() > 0:
             oof_avg = (oof_xgb[valid_oof_mask] + oof_lgbm[valid_oof_mask]) / 2.0
-            brier = brier_score_loss(y[valid_oof_mask], oof_avg)
-            print(f"  [{model_key}] OOF Brier score = {brier:.4f}")
+            y_oof = y[valid_oof_mask]
+            if y_oof.std() > 1e-9 and oof_avg.std() > 1e-9:
+                corr = float(np.corrcoef(y_oof, oof_avg)[0, 1])
+            else:
+                corr = 0.0
+            print(f"  [{model_key}] OOF Pearson r = {corr:.4f}")
 
-        # Train meta-learner on OOF predictions
+        # Train meta-learner (XGBRegressor) on OOF predictions
         meta_cols_data = [oof_xgb.reshape(-1, 1), oof_lgbm.reshape(-1, 1)]
         for col in oof_meta:
             meta_cols_data.append(col.reshape(-1, 1))
@@ -402,101 +376,63 @@ class ContractModelTrainer:
         meta_X_scaled[meta_fit_mask] = meta_scaler.fit_transform(meta_X[meta_fit_mask])
         self.meta_scalers[model_key] = meta_scaler
 
-        meta_learner = xgb.XGBClassifier(
+        meta_learner = xgb.XGBRegressor(
             n_estimators=50, max_depth=2, learning_rate=0.1,
             subsample=0.8, colsample_bytree=0.8,
-            min_child_weight=20,        # prevent memorising tiny leaf nodes
-            scale_pos_weight=spw,       # counteract class imbalance
+            min_child_weight=20,
+            objective='reg:squarederror',
             tree_method='hist',
             device='cuda' if self.use_gpu else 'cpu',
-            random_state=42, eval_metric='auc', verbosity=0,
+            random_state=42, eval_metric='rmse', verbosity=0,
         )
         meta_learner.fit(meta_X_scaled[meta_fit_mask], y[meta_fit_mask])
         self.meta_learners[model_key] = meta_learner
 
         # ------------------------------------------------------------------
-        # Train FINAL base learners (on training portion, not holdout)
+        # Train FINAL base learners on full data
         # ------------------------------------------------------------------
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
         self.scalers[model_key] = scaler
 
         print(f"  [{model_key}] Training final base learners...", flush=True)
-        final_xgb = xgb.XGBClassifier(**self._xgb_params(model_key, spw))
+        final_xgb = xgb.XGBRegressor(**self._xgb_params(model_key))
         final_xgb.fit(X_scaled, y, sample_weight=sample_weights, verbose=False)
 
         if LGBM_AVAILABLE:
-            final_lgbm = lgb.LGBMClassifier(**self._lgbm_params(model_key, spw))
+            final_lgbm = lgb.LGBMRegressor(**self._lgbm_params(model_key))
             final_lgbm.fit(X_scaled, y, sample_weight=sample_weights)
         else:
             final_lgbm = None
 
         self.base_models[model_key] = {'xgb': final_xgb, 'lgbm': final_lgbm}
 
-        # ------------------------------------------------------------------
-        # Calibration: always fit sigmoid on OOF predictions.
-        #
-        # Why OOF instead of holdout: the holdout is the last 6 months of
-        # training data. In a bull market this window may have a breach rate
-        # of <5%, causing the sigmoid to push ALL probabilities toward that
-        # rate — a base-rate mismatch that makes every prediction near-zero.
-        # OOF predictions span the full 10-year training history and have a
-        # representative breach rate (~18-24%), so the calibrator outputs
-        # probabilities that reflect the true long-run risk.
-        # Sigmoid has only 2 free parameters so overfitting on OOF is minimal.
-        # ------------------------------------------------------------------
-        oof_cal_indices = np.where(meta_fit_mask)[0]
-        cal = CalibratedClassifierCV(FrozenEstimator(meta_learner), method='sigmoid')
-        cal.fit(meta_X_scaled[oof_cal_indices], y[oof_cal_indices])
-        self.calibrators[model_key] = cal
-        oof_br = float(y[oof_cal_indices].mean())
-        p_oof_before = meta_learner.predict_proba(meta_X_scaled[oof_cal_indices])[:, 1]
-        p_oof_after  = cal.predict_proba(meta_X_scaled[oof_cal_indices])[:, 1]
-        brier_b = brier_score_loss(y[oof_cal_indices], p_oof_before)
-        brier_a = brier_score_loss(y[oof_cal_indices], p_oof_after)
-        print(f"  [{model_key}] OOF calibrator: n={len(oof_cal_indices)}  "
-              f"breach={oof_br:.3f}  Brier {brier_b:.4f}→{brier_a:.4f}  "
-              f"pred_median={np.median(p_oof_after):.3f}")
-
-        # Report holdout Brier as a diagnostic (not used for calibration)
-        if holdout_ok:
-            X_hold = df_holdout[self.feature_cols].values
-            y_hold = df_holdout['target'].values
-            X_hold = np.nan_to_num(X_hold, nan=0.0, posinf=0.0, neginf=0.0)
-            X_hold_sc = scaler.transform(X_hold)
-            xgb_p_h  = final_xgb.predict_proba(X_hold_sc)[:, 1]
-            lgbm_p_h = final_lgbm.predict_proba(X_hold_sc)[:, 1] if final_lgbm else xgb_p_h
-            hold_meta_parts = [xgb_p_h.reshape(-1, 1), lgbm_p_h.reshape(-1, 1)]
-            for idx in meta_idx:
-                v = X_hold[:, idx].reshape(-1, 1) if idx >= 0 else np.zeros((len(X_hold), 1))
-                hold_meta_parts.append(v)
-            meta_X_hold = np.hstack(hold_meta_parts)
-            meta_X_hold_sc = meta_scaler.transform(meta_X_hold)
-            p_hold = cal.predict_proba(meta_X_hold_sc)[:, 1]
-            brier_hold = brier_score_loss(y_hold, p_hold)
-            print(f"  [{model_key}] Holdout check (diagnostic): n={len(y_hold)}  "
-                  f"breach={float(y_hold.mean()):.3f}  Brier={brier_hold:.4f}  "
-                  f"pred_median={np.median(p_hold):.3f}")
-
         total_time = time.time() - t_slice_start
-        print(f"  [{model_key}] Slice total: {total_time:.1f}s  mean OOF AUC={mean_oof_auc:.4f}")
+        print(f"  [{model_key}] Slice total: {total_time:.1f}s  mean OOF RMSE={mean_oof_rmse:.5f}")
 
-        # Store metrics for server (breach_rate used for base-rate-relative CSP scoring)
+        # Store metrics for server
         if not hasattr(self, 'oof_metrics'):
             self.oof_metrics = {}
-        # Use OOF breach rate to match the OOF-fitted calibrator's output center.
-        # Using the holdout breach rate would create a base-rate mismatch: the
-        # calibrator outputs probabilities ~= OOF rate (~21%), but the score
-        # formula would compare them against the holdout rate (often 4-18%),
-        # driving routine predictions to -100.
-        breach_rate = float(y[oof_cal_indices].mean())
+
+        # Per-delta historical base rates — used for Task 3 relative edge signal
+        # "Is this contract riskier or safer than empirically average for this delta?"
+        mean_loss_by_delta = {}
+        if 'target_delta' in df_slice.columns:
+            grp = df_slice.groupby('target_delta')['target'].mean()
+            mean_loss_by_delta = {float(d): float(v) for d, v in grp.items()}
+
         self.oof_metrics[model_key] = {
-            'oof_auc':    mean_oof_auc,
-            'n_samples':  len(X),
-            'breach_rate': breach_rate,
-            'calibration': 'holdout' if holdout_ok else 'oof',
+            'oof_rmse':          mean_oof_rmse,
+            'n_samples':         len(X),
+            'assigned_rate':     float((y > 0).mean()),
+            'mean_loss_pct':     float(y.mean()),
+            'mean_loss_by_delta': mean_loss_by_delta,
+            'regression':        True,
         }
-        return mean_oof_auc
+        if mean_loss_by_delta:
+            delta_str = '  '.join(f'd{int(d*100):02d}={v:.4f}' for d, v in sorted(mean_loss_by_delta.items()))
+            print(f"  [{model_key}] Base loss by delta: {delta_str}")
+        return mean_oof_rmse
 
     # ------------------------------------------------------------------
     # Train all groups
@@ -504,7 +440,7 @@ class ContractModelTrainer:
 
     def train_all_groups(self) -> None:
         print(f"\n{'='*70}")
-        print("TRAINING CONTRACT MODEL (REGIME-SPLIT + XGB + LGBM + STACKING)")
+        print("TRAINING CONTRACT MODEL (REGRESSION — REGIME-SPLIT + XGB + LGBM + STACKING)")
         print('='*70)
 
         for group, df in self.group_dfs.items():
@@ -520,11 +456,11 @@ class ContractModelTrainer:
 
                 if n_train < MIN_REGIME_SAMPLES:
                     print(f"  Insufficient data, using combined fallback")
-                    auc = self._train_regime_slice(model_key, df.copy())
+                    rmse = self._train_regime_slice(model_key, df.copy())
                 else:
-                    auc = self._train_regime_slice(model_key, regime_df)
+                    rmse = self._train_regime_slice(model_key, regime_df)
 
-                print(f"  {model_key}: mean OOF AUC = {auc:.4f}")
+                print(f"  {model_key}: mean OOF RMSE = {rmse:.5f}")
 
         print(f"\n{'='*70}")
         print(f"Trained {len(self.base_models)} regime-specific ensembles")
@@ -537,12 +473,12 @@ class ContractModelTrainer:
     def save(self, filename: str = 'csp_contract_model.pkl') -> None:
         data = {
             'contract_model': True,
+            'regression': True,          # flag: predict csp_loss_pct, not P(breach)
             'ensemble': True,
             'regime_models': True,
             'base_models': self.base_models,
             'meta_learners': self.meta_learners,
             'meta_scalers': self.meta_scalers,
-            'calibrators': self.calibrators,
             'scalers': self.scalers,
             'thresholds': self.thresholds,
             'group_mapping': self.group_mapping,
@@ -553,13 +489,13 @@ class ContractModelTrainer:
             'vix_boundary': VIX_BOUNDARY,
             'forward_days': FORWARD_DAYS,
             'meta_feature_names': META_FEATURE_NAMES,
-            'version': 'contract_v1',
+            'version': 'contract_v2_regression',
             'use_gpu': self.use_gpu,
             'lgbm_available': LGBM_AVAILABLE,
             'oof_metrics': getattr(self, 'oof_metrics', {}),
         }
         joblib.dump(data, filename)
-        print(f"\nSaved contract model to {filename}")
+        print(f"\nSaved regression contract model to {filename}")
         print(f"  Keys: {sorted(self.base_models.keys())}")
         print(f"  Features: {len(self.feature_cols)} ({len(self.market_feature_cols)} market + {len(CONTRACT_FEATURE_COLS)} contract)")
 
@@ -578,7 +514,7 @@ def main():
     args = parser.parse_args()
 
     print('='*70)
-    print('CSP CONTRACT MODEL TRAINER')
+    print('CSP CONTRACT MODEL TRAINER  (regression — csp_loss_pct target)')
     print('='*70)
     print(f"Optuna params: {'yes' if args.use_optuna_params else 'no'}")
     print(f"Recency halflife: {args.recency_halflife}yr")

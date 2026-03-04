@@ -163,23 +163,34 @@ def settle_prediction(pred: dict, close_series: pd.Series, forward_days: int, dr
 
     window = close_series.iloc[start_pos : end_pos + 1]
     entry = float(window.iloc[0])
-    min_price = float(window.min())
-    end_price = float(window.iloc[-1])
+    end_price = float(window.iloc[-1])  # close at expiry — matches regression training target
 
     # Contract-aware settlement: if the prediction logged a specific strike,
-    # use it directly instead of the flat drop_threshold.
+    # use close-at-expiry (aligned with regression training target csp_loss_pct).
     suggested_strike = pred.get("suggested_strike")
+    model_version = str(pred.get("model_version", "")).lower()
+    is_regression = "v2_regression" in model_version or "regression" in model_version
+
     if suggested_strike is not None and float(suggested_strike) > 0:
         strike = float(suggested_strike)
-        # outcome = 1 means profitable (not breached), 0 means assigned
-        outcome = 1 if min_price >= strike else 0
+        if is_regression:
+            # Regression model: use close_at_expiry — same as training target
+            outcome = 1 if end_price >= strike else 0
+            actual_loss_pct = max(0.0, (strike - end_price) / strike)
+        else:
+            # Legacy classifier: use min_price (original behavior)
+            min_price = float(window.min())
+            outcome = 1 if min_price >= strike else 0
+            actual_loss_pct = max(0.0, (strike - end_price) / strike)  # log anyway
     else:
-        # Legacy: flat drop threshold
+        # Legacy: flat drop threshold using min_price
+        min_price = float(window.min())
         max_drawdown = (min_price - entry) / entry
         outcome = 1 if max_drawdown > -drop_threshold else 0
+        actual_loss_pct = None
 
     actual_return = (end_price - entry) / entry
-    return outcome, actual_return
+    return outcome, actual_return, actual_loss_pct
 
 
 def main():
@@ -253,9 +264,11 @@ def main():
                 skipped_unmatured += 1
             continue
 
-        outcome, actual_return = settled
+        outcome, actual_return, actual_loss_pct = settled
         pred["outcome"] = int(outcome)
         pred["outcome_date"] = now_iso
+        if actual_loss_pct is not None:
+            pred["actual_loss_pct"] = float(actual_loss_pct)
         pred["actual_return"] = float(actual_return)
         updated += 1
 

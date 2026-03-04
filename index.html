@@ -1401,22 +1401,23 @@
                                         <table style="width: 100%; min-width: 900px; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed;">
                                             <colgroup>
                                                 <col style="width: 7%">  <!-- Strike -->
-                                                <col style="width: 6%">  <!-- Bid -->
-                                                <col style="width: 6%">  <!-- Ask -->
-                                                <col style="width: 6%">  <!-- Low -->
-                                                <col style="width: 6%">  <!-- High -->
-                                                <col style="width: 6%">  <!-- Vol -->
-                                                <col style="width: 6%">  <!-- Delta -->
-                                                <col style="width: 6%">  <!-- Model -->
+                                                <col style="width: 5%">  <!-- Bid -->
+                                                <col style="width: 5%">  <!-- Ask -->
+                                                <col style="width: 5%">  <!-- Low -->
+                                                <col style="width: 5%">  <!-- High -->
+                                                <col style="width: 5%">  <!-- Vol -->
+                                                <col style="width: 5%">  <!-- Delta -->
+                                                <col style="width: 6%">  <!-- Pred Loss -->
                                                 <col style="width: 6%">  <!-- Edge -->
-                                                <col style="width: 6%">  <!-- ROR -->
-                                                <col style="width: 6%">  <!-- Norm ROR -->
+                                                <col style="width: 6%">  <!-- Rel Edge -->
+                                                <col style="width: 5%">  <!-- ROR -->
+                                                <col style="width: 5%">  <!-- Norm ROR -->
                                                 <col style="width: 6%">  <!-- EV -->
-                                                <col style="width: 6%">  <!-- θ Eff -->
-                                                <col style="width: 6%">  <!-- Theta -->
-                                                <col style="width: 6%">  <!-- Vega -->
-                                                <col style="width: 6%">  <!-- Gamma -->
-                                                <col style="width: 5%">  <!-- IV -->
+                                                <col style="width: 5%">  <!-- θ Eff -->
+                                                <col style="width: 5%">  <!-- Theta -->
+                                                <col style="width: 5%">  <!-- Vega -->
+                                                <col style="width: 5%">  <!-- Gamma -->
+                                                <col style="width: 4%">  <!-- IV -->
                                             </colgroup>
                                             <thead>
                                                 <tr style="background: var(--bg-row-alt);">
@@ -1427,8 +1428,9 @@
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">High</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Vol</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Delta</th>
-                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Model</th>
-                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Edge</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);" title="Model predicted loss % of strike at expiry">Pred Loss</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);" title="Edge = market premium% - predicted loss% (pp of strike)">Edge</th>
+                                                    <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);" title="Relative edge vs historical avg loss for this delta (pp of strike)">Rel Edge</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">ROR</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">Norm ROR</th>
                                                     <th style="padding: 6px 8px; text-align: right; color: var(--text-secondary);">EV</th>
@@ -1442,7 +1444,7 @@
                                             <tbody>
                                                 ${data.options_data && data.options_data.edge > 0 && data.options_data.expiration === exp ? `
                                                 <tr style="background: rgba(128,90,213,0.08); border-bottom: 1px solid #30363d;">
-                                                    <td colspan="17" style="padding: 4px 8px; font-size: 0.72rem; color: var(--accent-purple); font-weight: 600; letter-spacing: 0.05em;">⭐ SUGGESTED TRADE</td>
+                                                    <td colspan="18" style="padding: 4px 8px; font-size: 0.72rem; color: var(--accent-purple); font-weight: 600; letter-spacing: 0.05em;">⭐ SUGGESTED TRADE</td>
                                                 </tr>
                                                 <tr style="border-bottom: 2px solid var(--accent-purple); background: rgba(128,90,213,0.25); border-left: 3px solid var(--accent-purple);">
                                                     <td style="padding:6px 8px;color:var(--text-strike);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><strong>$${data.options_data.strike.toFixed(2)}</strong></td>
@@ -1452,8 +1454,9 @@
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.high ?? 0).toFixed(2)}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.volume.toLocaleString()}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.delta.toFixed(2)}</td>
-                                                    <td style="padding:6px 8px;text-align:right;color:var(--accent-blue);">${data.options_data.model_prob_assignment.toFixed(2)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;color:var(--accent-blue);">${data.options_data.model_prob_assignment != null ? (data.options_data.model_prob_assignment * 100).toFixed(2) + '%' : '-'}</td>
                                                     <td style="padding:6px 8px;text-align:right;font-weight:bold;color:var(--positive-green);">+${data.options_data.edge.toFixed(1)}</td>
+                                                    <td style="padding:6px 8px;text-align:right;font-weight:bold;color:${data.options_data.rel_edge_pp != null && data.options_data.rel_edge_pp > 0 ? 'var(--positive-green)' : 'var(--negative-red)'};">${data.options_data.rel_edge_pp != null ? (data.options_data.rel_edge_pp > 0 ? '+' : '') + data.options_data.rel_edge_pp.toFixed(2) : '-'}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.ror.toFixed(1)}%</td>
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${data.options_data.dte > 0 ? (data.options_data.ror * 30 / data.options_data.dte).toFixed(1) + '%' : '-'}</td>
                                                     <td style="padding:6px 8px;text-align:right;color:var(--accent-purple);">${data.options_data.ev_per_share != null ? '$' + data.options_data.ev_per_share.toFixed(2) : '-'}</td>
@@ -1464,7 +1467,7 @@
                                                     <td style="padding:6px 8px;text-align:right;color:#C0C0C0;">${(data.options_data.implied_volatility * 100).toFixed(0)}%</td>
                                                 </tr>
                                                 <tr style="background: rgba(128,90,213,0.04); border-bottom: 1px solid #30363d;">
-                                                    <td colspan="17" style="padding: 3px 8px; font-size: 0.72rem; color: #718096; letter-spacing: 0.04em;">ALL STRIKES</td>
+                                                    <td colspan="18" style="padding: 3px 8px; font-size: 0.72rem; color: #718096; letter-spacing: 0.04em;">ALL STRIKES</td>
                                                 </tr>
                                                 ` : ''}
                                                 ${expData.options.map((opt, rowIdx) => {
@@ -1479,8 +1482,9 @@
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${(opt.high ?? 0).toFixed(2)}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.volume.toLocaleString()}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.delta.toFixed(2)}</td>
-                                                        <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment != null ? opt.model_prob_assignment.toFixed(2) : '-'}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; color: var(--accent-blue);">${opt.model_prob_assignment != null ? (opt.model_prob_assignment * 100).toFixed(2) + '%' : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: var(${opt.edge > 0 ? '--positive-green' : '--negative-red'});">${opt.edge > 0 ? '+' : ''}${opt.edge != null ? opt.edge.toFixed(1) : '-'}</td>
+                                                        <td style="padding: 6px 8px; text-align: right; font-weight: bold; color: ${opt.rel_edge_pp != null ? (opt.rel_edge_pp > 0 ? 'var(--positive-green)' : 'var(--negative-red)') : '#8b949e'};">${opt.rel_edge_pp != null ? (opt.rel_edge_pp > 0 ? '+' : '') + opt.rel_edge_pp.toFixed(2) : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${opt.ror.toFixed(1)}%</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: #C0C0C0;">${expData.dte > 0 ? (opt.ror * 30 / expData.dte).toFixed(1) + '%' : '-'}</td>
                                                         <td style="padding: 6px 8px; text-align: right; color: var(--accent-purple);">${opt.ev_per_share != null ? '$' + opt.ev_per_share.toFixed(2) : '-'}</td>
